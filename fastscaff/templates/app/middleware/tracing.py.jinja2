@@ -1,0 +1,87 @@
+import uuid
+from typing import Callable, Optional
+
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+
+from app.core.logger import bind_context, clear_context
+
+
+class TracingMiddleware(BaseHTTPMiddleware):
+    """
+    Distributed tracing middleware.
+
+    Generates or propagates trace IDs for request tracking across services.
+    Supports common tracing header formats:
+        - X-Trace-ID (custom)
+        - X-Request-ID (common)
+        - traceparent (W3C Trace Context)
+
+    Usage:
+        app.add_middleware(TracingMiddleware)
+
+    The trace ID is:
+        - Read from incoming headers (if present)
+        - Generated if not present
+        - Bound to structlog context for all logs in this request
+        - Added to response headers
+    """
+
+    TRACE_HEADERS = [
+        "X-Trace-ID",
+        "X-Request-ID",
+        "X-Correlation-ID",
+    ]
+
+    def __init__(
+        self,
+        app,
+        header_name: str = "X-Trace-ID",
+        generate_if_missing: bool = True,
+    ) -> None:
+        """
+        Args:
+            app: ASGI application
+            header_name: Header name for trace ID in response
+            generate_if_missing: Generate trace ID if not in request headers
+        """
+        super().__init__(app)
+        self.header_name = header_name
+        self.generate_if_missing = generate_if_missing
+
+    def _extract_trace_id(self, request: Request) -> Optional[str]:
+        """Extract trace ID from request headers."""
+        for header in self.TRACE_HEADERS:
+            trace_id = request.headers.get(header)
+            if trace_id:
+                return trace_id
+
+        traceparent = request.headers.get("traceparent")
+        if traceparent:
+            parts = traceparent.split("-")
+            if len(parts) >= 2:
+                return parts[1]
+
+        return None
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        trace_id = self._extract_trace_id(request)
+
+        if not trace_id and self.generate_if_missing:
+            trace_id = uuid.uuid4().hex
+
+        if trace_id:
+            bind_context(trace_id=trace_id)
+            request.state.trace_id = trace_id
+
+        try:
+            response = await call_next(request)
+
+            if trace_id:
+                response.headers[self.header_name] = trace_id
+
+            return response
+        finally:
+            clear_context()
+

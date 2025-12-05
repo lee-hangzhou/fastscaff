@@ -1,0 +1,35 @@
+from fastapi import APIRouter, Depends
+
+from app.api.v1.deps import get_auth_service, get_current_user_id
+from app.schemas.auth import LoginRequest, LoginResponse, RefreshRequest, TokenResponse
+from app.schemas.base import Response
+from app.services.auth import AuthService
+
+router = APIRouter()
+
+
+@router.post("/login")
+async def login(
+    request: LoginRequest,
+    service: AuthService = Depends(get_auth_service),
+) -> Response[LoginResponse]:
+    result = await service.login(request.username, request.password)
+    return Response(data=result)
+
+
+@router.post("/refresh")
+async def refresh_token(
+    request: RefreshRequest,
+    service: AuthService = Depends(get_auth_service),
+) -> Response[TokenResponse]:
+    result = await service.refresh_token(request.refresh_token)
+    return Response(data=result)
+
+
+@router.post("/logout")
+async def logout(
+    user_id: int = Depends(get_current_user_id),
+) -> Response[None]:
+    # user_id is used to ensure user is authenticated
+    _ = user_id
+    return Response(data=None, msg="Logged out")

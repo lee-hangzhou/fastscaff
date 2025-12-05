@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{{ project_name_snake }}"
+version = "0.1.0"
+description = "{{ project_name }}"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = [
+    "B008",   # function-call-in-default-argument (common with Depends)
+    "UP006",  # use-standard-type-annotations (prefer List over list for clarity)
+    "UP007",  # use-union-syntax (prefer Optional/Union over |)
+    "UP035",  # deprecated-import (prefer typing.List/Optional for compatibility)
+    "UP045",  # use-none-syntax (prefer Optional[X] over X | None)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+check_untyped_defs = true

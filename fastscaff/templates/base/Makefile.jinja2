@@ -1,0 +1,53 @@
+.PHONY: help install dev test lint format clean docker-build docker-up docker-down
+
+help:
+	@echo "Available commands:"
+	@echo "  make install      Install dependencies"
+	@echo "  make dev          Start development server"
+	@echo "  make test         Run tests"
+	@echo "  make lint         Run linter"
+	@echo "  make format       Format code"
+	@echo "  make clean        Clean cache files"
+	@echo "  make docker-build Build Docker image"
+	@echo "  make docker-up    Start all services"
+	@echo "  make docker-down  Stop all services"
+
+install:
+	pip install -r requirements.txt
+
+install-dev:
+	pip install -r requirements.txt
+	pip install pytest pytest-cov pytest-asyncio black ruff mypy pre-commit
+	pre-commit install
+
+dev:
+	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+test:
+	pytest tests/ -v --cov=app --cov-report=term-missing
+
+lint:
+	ruff check app/ tests/
+
+format:
+	ruff check --fix app/ tests/
+	ruff format app/ tests/
+
+clean:
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+docker-build:
+	docker-compose build
+
+docker-up:
+	docker-compose up -d
+
+docker-down:
+	docker-compose down
+
+docker-logs:
+	docker-compose logs -f app

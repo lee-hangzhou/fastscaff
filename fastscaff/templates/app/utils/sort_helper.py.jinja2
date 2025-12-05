@@ -1,0 +1,76 @@
+import re
+from typing import Optional, Type
+
+{% if is_tortoise %}
+from tortoise.models import Model
+
+_ORDER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def parse_order_string(order: str, model: Type[Model]) -> Optional[str]:
+    """
+    Parse order string for Tortoise ORM.
+
+    Args:
+        order: Order string, format: +field_name or -field_name
+        model: Tortoise model class
+
+    Returns:
+        Parsed order string or None if invalid
+    """
+    if not order:
+        return None
+
+    s = order.strip()
+    if len(s) < 2 or s[0] not in "+-":
+        return None
+
+    field = s[1:]
+    if not _ORDER_RE.fullmatch(field):
+        return None
+
+    if field in ("id", "pk"):
+        field = model._meta.pk_attr
+
+    if field not in model._meta.db_fields:
+        return None
+
+    return field if s[0] == "+" else f"-{field}"
+{% else %}
+from sqlalchemy import UnaryExpression, asc, desc
+from sqlalchemy.orm import DeclarativeBase
+
+_ORDER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def parse_order_string(
+    order: str,
+    model: Type[DeclarativeBase],
+) -> Optional[UnaryExpression]:
+    """
+    Parse order string for SQLAlchemy.
+
+    Args:
+        order: Order string, format: +field_name or -field_name
+        model: SQLAlchemy model class
+
+    Returns:
+        SQLAlchemy order clause or None if invalid
+    """
+    if not order:
+        return None
+
+    s = order.strip()
+    if len(s) < 2 or s[0] not in "+-":
+        return None
+
+    field = s[1:]
+    if not _ORDER_RE.fullmatch(field):
+        return None
+
+    if not hasattr(model, field):
+        return None
+
+    column = getattr(model, field)
+    return asc(column) if s[0] == "+" else desc(column)
+{% endif %}

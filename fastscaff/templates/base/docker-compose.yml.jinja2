@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {{ project_name_snake }}_app
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=prod
+      - DEBUG=false
+{% if is_tortoise %}
+      - DATABASE_URL=mysql://root:password@mysql:3306/{{ project_name_snake }}
+{% else %}
+      - DATABASE_URL=mysql+aiomysql://root:password@mysql:3306/{{ project_name_snake }}
+{% endif %}
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-secret-key}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - {{ project_name_snake }}_network
+
+  mysql:
+    image: mysql:8.0
+    container_name: {{ project_name_snake }}_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: {{ project_name_snake }}
+      MYSQL_CHARACTER_SET_SERVER: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - {{ project_name_snake }}_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: {{ project_name_snake }}_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - {{ project_name_snake }}_network
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  {{ project_name_snake }}_network:
+    driver: bridge

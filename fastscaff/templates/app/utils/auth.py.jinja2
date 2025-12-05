@@ -1,0 +1,145 @@
+from typing import Dict, List, Optional, Set, Tuple
+
+from fastapi import HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.core.security import decode_token
+
+
+class AuthRequired:
+    """
+    Authentication dependency that can be customized.
+
+    Usage:
+        @router.get("/api/resource")
+        async def get_resource(user_id: int = Depends(AuthRequired())):
+            ...
+
+        @router.get("/api/admin/resource")
+        async def get_admin_resource(user_id: int = Depends(AuthRequired(roles=["admin"]))):
+            ...
+    """
+
+    def __init__(
+        self,
+        roles: Optional[List[str]] = None,
+        permissions: Optional[List[str]] = None,
+        auto_error: bool = True,
+    ) -> None:
+        self.roles: Optional[set[str]] = set(roles) if roles else None
+        self.permissions: Optional[set[str]] = set(permissions) if permissions else None
+        self.auto_error = auto_error
+        self.security = HTTPBearer(auto_error=auto_error)
+
+    async def __call__(
+        self,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = None,
+    ) -> Optional[int]:
+        if credentials is None:
+            credentials = await self.security(request)
+
+        if not credentials:
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Not authenticated",
+                )
+            return None
+
+        payload = decode_token(credentials.credentials)
+        if not payload:
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired token",
+                )
+            return None
+
+        if payload.get("type") != "access":
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token type",
+                )
+            return None
+
+        user_id_value = payload.get("sub")
+        if user_id_value is None:
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token payload",
+                )
+            return None
+
+        try:
+            user_id = int(user_id_value)
+        except (ValueError, TypeError) as e:
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid user ID in token",
+                ) from e
+            return None
+
+        if self.roles:
+            user_roles = set(payload.get("roles", []))
+            if not user_roles.intersection(self.roles):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Insufficient permissions",
+                )
+
+        if self.permissions:
+            user_permissions = set(payload.get("permissions", []))
+            if not user_permissions.issuperset(self.permissions):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Insufficient permissions",
+                )
+
+        request.state.user_id = user_id
+        request.state.user_roles = payload.get("roles", [])
+
+        return user_id
+
+
+class WhitelistChecker:
+    """
+    Check if a path is in whitelist (no auth required).
+
+    Usage:
+        whitelist = WhitelistChecker([
+            ("/api/v1/health", ["GET"]),
+            ("/api/v1/auth/login", ["POST"]),
+        ])
+
+        if whitelist.is_allowed(request.url.path, request.method):
+            # Skip auth
+            ...
+    """
+
+    def __init__(self, whitelist: List[Tuple[str, List[str]]]) -> None:
+        self._whitelist: Dict[str, Set[str]] = {}
+        for path, methods in whitelist:
+            self._whitelist[path] = {m.upper() for m in methods}
+
+    def is_allowed(self, path: str, method: str) -> bool:
+        """Check if path and method are whitelisted."""
+        if path in self._whitelist:
+            methods = self._whitelist[path]
+            return method.upper() in methods or "*" in methods
+
+        for whitelist_path, methods in self._whitelist.items():
+            if whitelist_path.endswith("*"):
+                prefix = whitelist_path[:-1]
+                if path.startswith(prefix):
+                    return method.upper() in methods or "*" in methods
+
+        return False
+
+
+# Pre-configured instances
+auth_required = AuthRequired()
+admin_required = AuthRequired(roles=["admin"])

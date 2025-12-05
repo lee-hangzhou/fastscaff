@@ -1,0 +1,29 @@
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic[email]>=2.5.0
+pydantic-settings>=2.1.0
+structlog>=24.1.0
+{% if is_tortoise %}
+tortoise-orm>=0.20.0
+# Uncomment for MySQL: aiomysql>=0.2.0
+# Uncomment for PostgreSQL: asyncpg>=0.29.0
+{% else %}
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.19.0
+# Uncomment for MySQL: aiomysql>=0.2.0
+# Uncomment for PostgreSQL: asyncpg>=0.29.0
+greenlet>=3.0.0
+{% endif %}
+redis>=5.0.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.6
+httpx>=0.26.0
+{% if with_rbac %}
+casbin>=1.36.0
+casbin-async-sqlalchemy-adapter>=1.4.0
+{% endif %}
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

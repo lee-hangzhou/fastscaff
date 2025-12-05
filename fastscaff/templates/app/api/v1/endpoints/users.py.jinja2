@@ -1,0 +1,26 @@
+from fastapi import APIRouter, Depends
+
+from app.api.v1.deps import get_current_user_id, get_user_service
+from app.schemas.base import Response
+from app.schemas.user import UserCreate, UserInfo
+from app.services.user import UserService
+
+router = APIRouter()
+
+
+@router.post("")
+async def create_user(
+    request: UserCreate,
+    service: UserService = Depends(get_user_service),
+) -> Response[UserInfo]:
+    result = await service.create_user(request)
+    return Response(data=result)
+
+
+@router.get("/me")
+async def get_current_user(
+    user_id: int = Depends(get_current_user_id),
+    service: UserService = Depends(get_user_service),
+) -> Response[UserInfo]:
+    result = await service.get_user_by_id(user_id)
+    return Response(data=result)

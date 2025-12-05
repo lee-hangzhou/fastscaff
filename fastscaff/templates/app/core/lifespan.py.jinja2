@@ -1,0 +1,38 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from app.core.database import db
+from app.core.logger import logger
+from app.core.redis import redis_client
+{% if with_rbac %}
+from app.core.rbac import enforcer
+from app.core.config import settings
+{% endif %}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    _ = app  # FastAPI requires app parameter
+    logger.info("Starting application")
+
+    await db.connect()
+    logger.info("Database connected")
+
+    await redis_client.connect()
+    logger.info("Redis connected")
+{% if with_rbac %}
+
+    await enforcer.init(adapter=settings.DATABASE_URL)
+    logger.info("RBAC enforcer initialized")
+{% endif %}
+
+    yield
+
+    logger.info("Shutting down application")
+
+    await redis_client.disconnect()
+    await db.disconnect()
+
+    logger.info("Shutdown completed")
