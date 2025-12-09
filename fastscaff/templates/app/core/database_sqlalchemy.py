@@ -1,11 +1,20 @@
+from contextvars import ContextVar
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
-from app.core.logger import logger
 from app.core.singleton import Singleton
+
+_session_ctx: ContextVar[AsyncSession] = ContextVar("db_session")
+
+
+def get_session() -> AsyncSession:
+    try:
+        return _session_ctx.get()
+    except LookupError:
+        raise RuntimeError("No session in context. Is the middleware configured?")
 
 
 class Database(Singleton):
@@ -14,84 +23,35 @@ class Database(Singleton):
         self._engine = None
         self._session_factory = None
 
-    @property
-    def is_initialized(self) -> bool:
-        return self._initialized
-
-    @staticmethod
-    def _get_engine_kwargs(url: str) -> Dict[str, Any]:
-        # SQLite doesn't support connection pooling options
-        if url.startswith("sqlite"):
-            return {
-                "echo": settings.DEBUG,
-            }
-        # MySQL/PostgreSQL connection pool settings
-        return {
-            "pool_size": 10,
-            "max_overflow": 20,
-            "pool_pre_ping": True,
-            "pool_recycle": 3600,
-            "echo": settings.DEBUG,
-        }
-
-    async def connect(self, db_url: Optional[str] = None) -> None:
+    async def connect(self, db_url: str = None) -> None:
         if self._initialized:
-            logger.warning("Database already initialized")
             return
-
         url = db_url or settings.DATABASE_URL
-        engine_kwargs = self._get_engine_kwargs(url)
-
-        self._engine = create_async_engine(url, **engine_kwargs)
-
+        self._engine = create_async_engine(url, echo=settings.DEBUG)
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             class_=AsyncSession,
             expire_on_commit=False,
-            autocommit=False,
-            autoflush=False,
         )
-
         self._initialized = True
-        logger.info("Database initialized")
 
     async def disconnect(self) -> None:
-        if not self._initialized or not self._engine:
-            return
-
-        await self._engine.dispose()
-        self._initialized = False
-        logger.info("Database connections closed")
-
-    async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
-        if not self._session_factory:
-            raise RuntimeError("Database not initialized")
-
-        async with self._session_factory() as session:
-            try:
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
+        if self._engine:
+            await self._engine.dispose()
+            self._initialized = False
 
     @asynccontextmanager
-    async def session(self) -> AsyncGenerator[AsyncSession, None]:
-        if not self._session_factory:
-            raise RuntimeError("Database not initialized")
-
+    async def session_context(self) -> AsyncGenerator[AsyncSession, None]:
         async with self._session_factory() as session:
+            token = _session_ctx.set(session)
             try:
                 yield session
                 await session.commit()
             except Exception:
                 await session.rollback()
                 raise
+            finally:
+                _session_ctx.reset(token)
 
 
 db = Database()
-
-
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    async for session in db.get_session():
-        yield session

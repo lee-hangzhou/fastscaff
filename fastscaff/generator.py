@@ -86,7 +86,12 @@ class ProjectGenerator:
         app_dir.mkdir(exist_ok=True)
 
         self._copy_file("app/__init__.py", "app/__init__.py")
-        self._copy_file("app/main.py", "app/main.py")
+
+        # ORM-specific main.py
+        if self.orm == "tortoise":
+            self._copy_file("app/main_tortoise.py", "app/main.py")
+        else:
+            self._copy_file("app/main_sqlalchemy.py", "app/main.py")
 
         self._generate_core()
         self._generate_api()
@@ -203,8 +208,14 @@ class ProjectGenerator:
         middleware_dir = self.output_path / "app" / "middleware"
         middleware_dir.mkdir(exist_ok=True)
 
+        # ORM-specific __init__.py
+        if self.orm == "tortoise":
+            self._copy_file("app/middleware/__init___tortoise.py", "app/middleware/__init__.py")
+        else:
+            self._copy_file("app/middleware/__init___sqlalchemy.py", "app/middleware/__init__.py")
+            self._copy_file("app/middleware/database.py", "app/middleware/database.py")
+
         static_files = [
-            ("app/middleware/__init__.py", "app/middleware/__init__.py"),
             ("app/middleware/logging.py", "app/middleware/logging.py"),
             ("app/middleware/cors.py", "app/middleware/cors.py"),
             ("app/middleware/security.py", "app/middleware/security.py"),

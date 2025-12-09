@@ -11,8 +11,6 @@ from app.middleware import (
     TracingMiddleware,
     setup_cors,
 )
-# Optional middleware (uncomment to enable):
-# from app.middleware import JWTAuthMiddleware, SignatureMiddleware
 
 
 def create_app() -> FastAPI:
@@ -25,37 +23,18 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Middleware order matters: first added = last executed
-    # Recommended order: CORS -> Security -> Tracing -> Auth -> Logging
-
     setup_cors(application)
     application.add_middleware(SecurityHeadersMiddleware)
     application.add_middleware(TracingMiddleware)
     application.add_middleware(RequestLoggingMiddleware)
 
-    # Optional: JWT authentication middleware (validates token on all requests)
-    # application.add_middleware(
-    #     JWTAuthMiddleware,
-    #     whitelist=["/health", "/docs", "/redoc", "/openapi.json"],
-    #     whitelist_prefixes=["/api/v1/auth"],
-    # )
-
-    # Optional: Request signature verification (for API security)
-    # application.add_middleware(
-    #     SignatureMiddleware,
-    #     secret_key=settings.SIGN_SECRET_KEY,
-    #     whitelist=["/health", "/docs"],
-    # )
-
     register_exception_handlers(application)
-
     application.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
     return application
 
 
 app = create_app()
-
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=settings.PORT, reload=settings.DEBUG)

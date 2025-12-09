@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple
 from pydantic import EmailStr
 from sqlalchemy import select
 
-from app.core.database import db
 from app.models.user import User
 from app.repositories.base import BaseRepository
 from app.schemas.base import Pager
@@ -13,18 +12,16 @@ class UserRepository(BaseRepository[User]):
     model = User
 
     async def get_by_username(self, username: str) -> Optional[User]:
-        async with db.session() as session:
-            result = await session.execute(
-                select(self.model).where(self.model.username == username)
-            )
-            return result.scalar_one_or_none()
+        result = await self.session.execute(
+            select(self.model).where(self.model.username == username)
+        )
+        return result.scalar_one_or_none()
 
     async def get_by_email(self, email: EmailStr) -> Optional[User]:
-        async with db.session() as session:
-            result = await session.execute(
-                select(self.model).where(self.model.email == email)
-            )
-            return result.scalar_one_or_none()
+        result = await self.session.execute(
+            select(self.model).where(self.model.email == email)
+        )
+        return result.scalar_one_or_none()
 
     async def get_users(
         self,
@@ -51,8 +48,7 @@ class UserRepository(BaseRepository[User]):
         )
 
     async def batch_get_by_ids(self, ids: List[int]) -> List[User]:
-        async with db.session() as session:
-            result = await session.execute(
-                select(self.model).where(self.model.id.in_(ids))
-            )
-            return list(result.scalars().all())
+        result = await self.session.execute(
+            select(self.model).where(self.model.id.in_(ids))
+        )
+        return list(result.scalars().all())
