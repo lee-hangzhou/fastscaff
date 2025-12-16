@@ -56,6 +56,11 @@ def new(
         "--with-rbac",
         help="Include Casbin RBAC support",
     ),
+    with_celery: bool = typer.Option(
+        False,
+        "--with-celery",
+        help="Include Celery task queue support",
+    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -85,6 +90,8 @@ def new(
     features = []
     if with_rbac:
         features.append("RBAC (Casbin)")
+    if with_celery:
+        features.append("Celery")
 
     console.print(Panel.fit(
         f"[bold green]Creating project[/bold green]\n\n"
@@ -102,6 +109,7 @@ def new(
             orm=orm,
             output_path=project_path,
             with_rbac=with_rbac,
+            with_celery=with_celery,
         )
         generator.generate()
 

@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint format clean docker-build docker-up docker-down
+.PHONY: help install dev test lint format clean docker-build docker-up docker-down{% if with_celery %} celery-worker celery-beat{% endif %}
 
 help:
 	@echo "Available commands:"
@@ -11,6 +11,10 @@ help:
 	@echo "  make docker-build Build Docker image"
 	@echo "  make docker-up    Start all services"
 	@echo "  make docker-down  Stop all services"
+{% if with_celery %}
+	@echo "  make celery-worker Start Celery worker"
+	@echo "  make celery-beat   Start Celery beat scheduler"
+{% endif %}
 
 install:
 	pip install -r requirements.txt
@@ -51,3 +55,12 @@ docker-down:
 
 docker-logs:
 	docker-compose logs -f app
+{% if with_celery %}
+
+celery-worker:
+	celery -A celery_worker worker --loglevel=info
+
+celery-beat:
+	celery -A celery_worker beat --loglevel=info
+{% endif %}
+

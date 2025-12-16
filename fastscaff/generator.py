@@ -18,11 +18,13 @@ class ProjectGenerator:
         orm: str,
         output_path: Path,
         with_rbac: bool = False,
+        with_celery: bool = False,
     ) -> None:
         self.project_name = project_name
         self.orm = orm
         self.output_path = output_path
         self.with_rbac = with_rbac
+        self.with_celery = with_celery
 
         self.env = Environment(
             loader=FileSystemLoader(str(TEMPLATES_DIR)),
@@ -36,6 +38,7 @@ class ProjectGenerator:
             "is_tortoise": orm == "tortoise",
             "is_sqlalchemy": orm == "sqlalchemy",
             "with_rbac": with_rbac,
+            "with_celery": with_celery,
         }
 
     def generate(self) -> None:
@@ -67,6 +70,7 @@ class ProjectGenerator:
             ("base/pyproject.toml.jinja2", "pyproject.toml"),
             ("base/requirements.txt.jinja2", "requirements.txt"),
             ("base/README.md.jinja2", "README.md"),
+            ("base/Makefile.jinja2", "Makefile"),
         ]
         for template_path, output_name in templates:
             self._render_template(template_path, output_name)
@@ -76,10 +80,13 @@ class ProjectGenerator:
             ("base/gitignore", ".gitignore"),
             ("base/pre-commit-config.yaml", ".pre-commit-config.yaml"),
             ("base/Dockerfile", "Dockerfile"),
-            ("base/Makefile", "Makefile"),
         ]
         for src_path, output_name in static_files:
             self._copy_file(src_path, output_name)
+
+        # Optional: Celery worker entry point
+        if self.with_celery:
+            self._copy_file("base/celery_worker.py", "celery_worker.py")
 
     def _generate_app_structure(self) -> None:
         app_dir = self.output_path / "app"
@@ -102,6 +109,9 @@ class ProjectGenerator:
         self._generate_middleware()
         self._generate_exceptions()
         self._generate_utils()
+
+        if self.with_celery:
+            self._generate_tasks()
 
     def _generate_core(self) -> None:
         core_dir = self.output_path / "app" / "core"
@@ -252,6 +262,19 @@ class ProjectGenerator:
             ("app/utils/rate_limiter.py", "app/utils/rate_limiter.py"),
             ("app/utils/auth.py", "app/utils/auth.py"),
             ("app/utils/cache.py", "app/utils/cache.py"),
+        ]
+        for src_path, output_name in static_files:
+            self._copy_file(src_path, output_name)
+
+    def _generate_tasks(self) -> None:
+        tasks_dir = self.output_path / "app" / "tasks" / "jobs"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+
+        static_files = [
+            ("app/tasks/__init__.py", "app/tasks/__init__.py"),
+            ("app/tasks/config.py", "app/tasks/config.py"),
+            ("app/tasks/jobs/__init__.py", "app/tasks/jobs/__init__.py"),
+            ("app/tasks/jobs/example.py", "app/tasks/jobs/example.py"),
         ]
         for src_path, output_name in static_files:
             self._copy_file(src_path, output_name)

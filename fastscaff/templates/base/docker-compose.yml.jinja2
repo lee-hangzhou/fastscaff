@@ -64,6 +64,49 @@ services:
     networks:
       - {{ project_name_snake }}_network
 
+{% if with_celery %}
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {{ project_name_snake }}_celery_worker
+    command: celery -A celery_worker worker --loglevel=info
+    environment:
+      - ENV=prod
+{% if is_tortoise %}
+      - DATABASE_URL=mysql://root:password@mysql:3306/{{ project_name_snake }}
+{% else %}
+      - DATABASE_URL=mysql+aiomysql://root:password@mysql:3306/{{ project_name_snake }}
+{% endif %}
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - {{ project_name_snake }}_network
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {{ project_name_snake }}_celery_beat
+    command: celery -A celery_worker beat --loglevel=info
+    environment:
+      - ENV=prod
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - {{ project_name_snake }}_network
+{% endif %}
+
 volumes:
   mysql_data:
   redis_data:

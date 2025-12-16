@@ -39,6 +39,12 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = Field(default="INFO")
     LOG_FORMAT: str = Field(default="json")
+{% if with_celery %}
+
+    CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/1")
+    CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/1")
+    CELERY_TIMEZONE: str = Field(default="UTC")
+{% endif %}
 
     @property
     def cors_origins_list(self) -> List[str]:
