@@ -4,7 +4,7 @@ from app.core.security import (
     decode_token,
     verify_password,
 )
-from app.exceptions.base import InvalidCredentials, InvalidToken
+from app.exceptions.base import InvalidCredentialsError, InvalidTokenError
 from app.repositories.user import UserRepository
 from app.schemas.auth import LoginResponse, TokenResponse
 
@@ -16,7 +16,7 @@ class AuthService:
     async def login(self, username: str, password: str) -> LoginResponse:
         user = await self.user_repo.get_by_username(username)
         if not user or not verify_password(password, user.hashed_password):
-            raise InvalidCredentials
+            raise InvalidCredentialsError()
 
         access_token = create_access_token(subject=user.id)
         refresh_token = create_refresh_token(subject=user.id)
@@ -30,16 +30,16 @@ class AuthService:
     async def refresh_token(refresh_token: str) -> TokenResponse:
         payload = decode_token(refresh_token)
         if not payload or payload.get("type") != "refresh":
-            raise InvalidToken
+            raise InvalidTokenError()
 
         user_id_raw = payload.get("sub")
         if not user_id_raw:
-            raise InvalidToken
+            raise InvalidTokenError()
 
         if isinstance(user_id_raw, (str, int)):
             user_id = user_id_raw
         else:
-            raise InvalidToken
+            raise InvalidTokenError()
 
         access_token = create_access_token(subject=user_id)
         return TokenResponse(access_token=access_token)

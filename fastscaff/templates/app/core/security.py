@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
 
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -65,5 +66,5 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
         if not isinstance(payload, dict):
             return None
         return payload
-    except JWTError:
+    except InvalidTokenError:
         return None

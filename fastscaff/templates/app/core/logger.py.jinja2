@@ -50,7 +50,7 @@ def configure_stdlib_logging(log_level: str, json_logs: bool) -> None:
     shared_processors = get_shared_processors()
 
     if json_logs:
-        renderer: Processor = structlog.processors.JSONRenderer()
+        renderer: Processor = structlog.processors.JSONRenderer(ensure_ascii=False)
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=True)
 
@@ -119,10 +119,10 @@ def clear_context() -> None:
     clear_contextvars()
 
 
-def get_logger(name: Optional[str] = None) -> structlog.BoundLogger:
+def get_logger(name: Optional[str] = None) -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(name)
 
 
 setup_logging()
 
-logger: structlog.BoundLogger = get_logger("{{ project_name_snake }}")
+logger: structlog.stdlib.BoundLogger = get_logger("{{ project_name_snake }}")
