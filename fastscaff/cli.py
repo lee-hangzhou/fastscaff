@@ -38,9 +38,14 @@ def main(
     pass
 
 
-@app.command()
+@app.command(
+    help="Create a new FastAPI project. Example: fastscaff new myapp --orm tortoise",
+)
 def new(
-    project_name: str = typer.Argument(..., help="Project name"),
+    project_name: str = typer.Argument(
+        ...,
+        help="Project name (e.g. myapp, my_project)",
+    ),
     orm: str = typer.Option(
         "tortoise",
         "--orm",
@@ -51,7 +56,7 @@ def new(
         None,
         "--output",
         "-d",
-        help="Output directory",
+        help="Output directory (default: current directory)",
     ),
     with_rbac: bool = typer.Option(
         False,
@@ -70,6 +75,13 @@ def new(
         help="Overwrite existing directory",
     ),
 ) -> None:
+    """Create a new FastAPI project.
+
+    Examples:
+      fastscaff new myapp
+      fastscaff new myapp --orm sqlalchemy
+      fastscaff new myapp -d ./projects --with-rbac
+    """
     if orm not in ("tortoise", "sqlalchemy"):
         console.print(f"[red]Error: ORM must be 'tortoise' or 'sqlalchemy', got '{orm}'[/red]")
         raise typer.Exit(1)
@@ -129,7 +141,7 @@ def new(
         raise typer.Exit(1) from None
 
 
-@app.command()
+@app.command(help="Print FastScaff version.")
 def version() -> None:
     console.print(f"FastScaff version: {__version__}")
 
@@ -148,32 +160,42 @@ def _detect_orm() -> Optional[str]:
     return None
 
 
-@app.command()
+@app.command(
+    help="Generate ORM models from MySQL (one file per table). Example: fastscaff models -d mysql://user:pass@host:3306/db",
+)
 def models(
     db_url: str = typer.Option(
         ...,
         "--db-url",
         "-d",
-        help="Database URL (mysql://user:pass@host:port/db)",
+        help="MySQL URL: mysql://user:password@host:port/database",
     ),
     orm: Optional[str] = typer.Option(
         None,
         "--orm",
         "-o",
-        help="ORM choice: tortoise or sqlalchemy (auto-detected if not specified)",
+        help="ORM: tortoise or sqlalchemy (auto-detected from requirements.txt if omitted)",
     ),
     tables: Optional[str] = typer.Option(
         None,
         "--tables",
         "-t",
-        help="Comma-separated table names (default: all tables)",
+        help="Only these tables, comma-separated (default: all)",
     ),
     output: Optional[Path] = typer.Option(
         None,
         "--output",
-        help="Output directory (default: current directory)",
+        "-O",
+        help="Directory to write model files (default: current directory)",
     ),
 ) -> None:
+    """Generate ORM model files from MySQL (one .py per table, filename = table name).
+
+    Examples:
+      fastscaff models -d mysql://user:pass@localhost:3306/mydb
+      fastscaff models -d mysql://user:pass@localhost:3306/mydb -o tortoise -O app/models
+      fastscaff models -d mysql://... --tables user,order,product
+    """
     # Auto-detect ORM if not specified
     if orm is None:
         orm = _detect_orm()
@@ -218,9 +240,9 @@ def models(
         for t in table_infos:
             console.print(f"  - {t.name} ({len(t.columns)} columns)")
 
-        generate_models(table_infos, orm, output_path)
-
-        console.print(f"\n[bold green]Models generated: {output_path}/generated_models.py[/bold green]")
+        written = generate_models(table_infos, orm, output_path)
+        files_str = ", ".join(f.name for f in written)
+        console.print(f"\n[bold green]Models generated: {output_path}/ ({files_str})[/bold green]")
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")

@@ -116,6 +116,34 @@ class SQLAlchemyModelGenerator:
 
         return "\n".join(lines)
 
+    def _generate_imports_for_table(self, table: TableInfo) -> str:
+        type_set: Set[str] = set()
+        has_index = bool(table.indexes)
+        has_foreign_key = bool(table.foreign_keys)
+        for col in table.columns:
+            sa_type = MYSQL_TO_SQLALCHEMY.get(col.data_type.lower(), "String")
+            type_set.add(sa_type)
+        type_imports = ", ".join(sorted(type_set))
+        lines = [
+            "from datetime import datetime",
+            "from typing import Optional",
+            "",
+            f"from sqlalchemy import Column, {type_imports}",
+        ]
+        if has_index:
+            lines.append("from sqlalchemy import Index")
+        if has_foreign_key:
+            lines.append("from sqlalchemy import ForeignKey")
+            lines.append("from sqlalchemy.orm import relationship")
+        lines.append("")
+        lines.append("from app.models.base import BaseModel")
+        return "\n".join(lines)
+
+    def generate_single(self, table: TableInfo) -> str:
+        imports = self._generate_imports_for_table(table)
+        model = self._generate_model(table)
+        return imports + "\n\n" + model + "\n"
+
     def _generate_model(self, table: TableInfo) -> str:
         class_name = snake_to_pascal(table.name)
         lines = []
@@ -243,6 +271,11 @@ class TortoiseModelGenerator:
 
         return "\n".join(lines)
 
+    def generate_single(self, table: TableInfo) -> str:
+        imports = self._generate_imports()
+        model = self._generate_model(table)
+        return imports + "\n\n" + model + "\n"
+
     def _generate_field(
         self, col: ColumnInfo, foreign_keys: List[ForeignKeyInfo], table_name: str
     ) -> str:
@@ -250,7 +283,10 @@ class TortoiseModelGenerator:
         fk = next((f for f in foreign_keys if f.column == col.name), None)
         if fk:
             related_class = snake_to_pascal(fk.referenced_table)
-            return f'{col.name.replace("_id", "")} = fields.ForeignKeyField("models.{related_class}", related_name="{table_name}s")'
+            return (
+                f'{col.name.replace("_id", "")} = fields.ForeignKeyField('
+                f'"models.{related_class}", related_name="{table_name}s")'
+            )
 
         field_type = MYSQL_TO_TORTOISE.get(col.data_type.lower(), "CharField")
 
@@ -289,13 +325,19 @@ def generate_models(
     tables: List[TableInfo],
     orm: str,
     output_path: Path,
-) -> None:
+) -> List[Path]:
+    """Generate one model file per table; filename is table name (snake_case).py."""
     if orm == "sqlalchemy":
         generator = SQLAlchemyModelGenerator(tables)
     else:
         generator = TortoiseModelGenerator(tables)
 
-    content = generator.generate()
-    output_file = output_path / "generated_models.py"
-    output_file.write_text(content, encoding="utf-8")
+    output_path.mkdir(parents=True, exist_ok=True)
+    written: List[Path] = []
+    for table in tables:
+        content = generator.generate_single(table)
+        file_path = output_path / f"{table.name}.py"
+        file_path.write_text(content, encoding="utf-8")
+        written.append(file_path)
+    return written
 
