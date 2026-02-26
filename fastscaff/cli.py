@@ -6,6 +6,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from fastscaff import __version__
+from fastscaff.add_celery import add_celery
 from fastscaff.generator import ProjectGenerator
 from fastscaff.introspector import MySQLIntrospector
 from fastscaff.model_generator import generate_models
@@ -139,6 +140,43 @@ def new(
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1) from None
+
+
+add_app = typer.Typer(help="Add optional features to an existing FastScaff project")
+
+
+@add_app.command(
+    "celery",
+    help="Add Celery support (tasks, worker, beat, config). Run from project root or use --path.",
+)
+def add_celery_cmd(
+    path: Optional[Path] = typer.Option(
+        None,
+        "--path",
+        "-p",
+        help="Project root (default: current directory)",
+    ),
+) -> None:
+    """Add Celery to a project created without --with-celery."""
+    project_root = (path or Path.cwd()).resolve()
+    try:
+        add_celery(project_root)
+        console.print("[bold green]Celery support added.[/bold green]")
+        console.print("  - app/tasks/, celery_worker.py")
+        console.print("  - requirements.txt, config.py, Makefile, docker-compose.yml, .env.example updated")
+        console.print("  Run: pip install -r requirements.txt && make celery-worker")
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+    except RuntimeError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+
+app.add_typer(add_app, name="add")
 
 
 @app.command(help="Print FastScaff version.")
