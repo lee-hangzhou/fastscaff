@@ -164,11 +164,12 @@ def _detect_orm() -> Optional[str]:
     help="Generate ORM models from MySQL (one file per table). Example: fastscaff models -d mysql://user:pass@host:3306/db",
 )
 def models(
-    db_url: str = typer.Option(
-        ...,
+    db_url: Optional[str] = typer.Option(
+        None,
         "--db-url",
         "-d",
-        help="MySQL URL: mysql://user:password@host:port/database",
+        help="MySQL URL (default: env DATABASE_URL)",
+        envvar="DATABASE_URL",
     ),
     orm: Optional[str] = typer.Option(
         None,
@@ -207,6 +208,12 @@ def models(
 
     if orm not in ("tortoise", "sqlalchemy"):
         console.print(f"[red]Error: ORM must be 'tortoise' or 'sqlalchemy', got '{orm}'[/red]")
+        raise typer.Exit(1)
+
+    if not db_url:
+        console.print(
+            "[red]Error: Provide --db-url / -d or set DATABASE_URL in environment[/red]"
+        )
         raise typer.Exit(1)
 
     table_list: Optional[List[str]] = None
