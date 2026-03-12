@@ -57,12 +57,13 @@ async def http_error_handler(_request: Request, exc: StarletteHTTPException) -> 
 
 
 async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception(
+    logger.error(
         "unhandled_error",
         error_type=type(exc).__name__,
         error_message=str(exc),
         path=request.url.path,
         method=request.method,
+        exc_info=exc,
     )
 
     return JSONResponse(

@@ -42,6 +42,7 @@ def get_shared_processors() -> List[Processor]:
         _drop_color_message_key,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
     ]
 
