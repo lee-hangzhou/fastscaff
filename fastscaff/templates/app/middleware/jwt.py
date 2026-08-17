@@ -1,11 +1,13 @@
 from typing import Callable, List, Optional, Set
 
-from fastapi import Request, status
-from fastapi.responses import JSONResponse
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from app.core.logger import bind_context
 from app.core.security import decode_token
+from app.exceptions.codes import ErrInvalidToken, ErrUnauthorized
+from app.exceptions.handlers import build_error_response, log_app_error
 
 
 class JWTAuthMiddleware(BaseHTTPMiddleware):
@@ -38,50 +40,33 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         auth_header = request.headers.get("Authorization")
 
         if not auth_header:
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={
-                    "code": 401,
-                    "message": "Missing authorization header",
-                    "data": None,
-                },
-            )
+            err = ErrUnauthorized.new("Missing authorization header")
+            log_app_error(request, err)
+            return build_error_response(err)
 
         if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={
-                    "code": 401,
-                    "message": "Invalid authorization header format",
-                    "data": None,
-                },
-            )
+            err = ErrUnauthorized.new("Invalid authorization header format")
+            log_app_error(request, err)
+            return build_error_response(err)
 
-        token = auth_header[7:]  # Remove "Bearer " prefix
+        token = auth_header[7:]
         payload = decode_token(token)
 
         if not payload:
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={
-                    "code": 401,
-                    "message": "Invalid or expired token",
-                    "data": None,
-                },
-            )
+            err = ErrInvalidToken.new()
+            log_app_error(request, err)
+            return build_error_response(err)
 
         if payload.get("type") != "access":
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={
-                    "code": 401,
-                    "message": "Invalid token type",
-                    "data": None,
-                },
-            )
+            err = ErrInvalidToken.new("Invalid token type")
+            log_app_error(request, err)
+            return build_error_response(err)
 
-        request.state.user_id = payload.get("sub")
+        user_id = payload.get("sub")
+        request.state.user_id = user_id
         request.state.user_roles = payload.get("roles", [])
         request.state.token_payload = payload
+        if user_id is not None:
+            bind_context(user_id=str(user_id))
 
         return await call_next(request)

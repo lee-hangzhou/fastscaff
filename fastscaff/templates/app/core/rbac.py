@@ -2,10 +2,11 @@ import asyncio
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
-from fastapi import HTTPException, Request, status
+from fastapi import Request
 
 from app.core.logger import logger
 from app.core.singleton import Singleton
+from app.exceptions.codes import ErrForbidden, ErrUnauthorized
 
 CASBIN_AVAILABLE = False
 
@@ -121,8 +122,8 @@ class RBACEnforcer(Singleton):
         domain: Optional[str] = None,
     ) -> bool:
         if not self._initialized or not self._enforcer:
-            logger.warning("RBAC not initialized, allowing by default")
-            return True
+            logger.error("RBAC not initialized, denying by default")
+            return False
 
         sub = str(subject)
 
@@ -131,7 +132,7 @@ class RBACEnforcer(Singleton):
                 return await self._enforcer.enforce(sub, domain, resource, action)
             return await self._enforcer.enforce(sub, resource, action)
         except Exception as e:
-            logger.error(f"RBAC enforce error: {e}")
+            logger.error("RBAC enforce error", exc=e)
             return False
 
     async def add_policy(
@@ -151,7 +152,7 @@ class RBACEnforcer(Singleton):
                 return await self._enforcer.add_policy(sub, domain, resource, action)
             return await self._enforcer.add_policy(sub, resource, action)
         except Exception as e:
-            logger.error(f"RBAC add_policy error: {e}")
+            logger.error("RBAC add_policy error", exc=e)
             return False
 
     async def remove_policy(
@@ -171,7 +172,7 @@ class RBACEnforcer(Singleton):
                 return await self._enforcer.remove_policy(sub, domain, resource, action)
             return await self._enforcer.remove_policy(sub, resource, action)
         except Exception as e:
-            logger.error(f"RBAC remove_policy error: {e}")
+            logger.error("RBAC remove_policy error", exc=e)
             return False
 
     async def add_role_for_user(
@@ -192,7 +193,7 @@ class RBACEnforcer(Singleton):
                 )
             return await self._enforcer.add_role_for_user(user_str, role)
         except Exception as e:
-            logger.error(f"RBAC add_role_for_user error: {e}")
+            logger.error("RBAC add_role_for_user error", exc=e)
             return False
 
     async def delete_role_for_user(
@@ -213,7 +214,7 @@ class RBACEnforcer(Singleton):
                 )
             return await self._enforcer.delete_role_for_user(user_str, role)
         except Exception as e:
-            logger.error(f"RBAC delete_role_for_user error: {e}")
+            logger.error("RBAC delete_role_for_user error", exc=e)
             return False
 
     async def get_roles_for_user(
@@ -233,7 +234,7 @@ class RBACEnforcer(Singleton):
                 )
             return await self._enforcer.get_roles_for_user(user_str)
         except Exception as e:
-            logger.error(f"RBAC get_roles_for_user error: {e}")
+            logger.error("RBAC get_roles_for_user error", exc=e)
             return []
 
     async def get_users_for_role(
@@ -249,7 +250,7 @@ class RBACEnforcer(Singleton):
                 return await self._enforcer.get_users_for_role_in_domain(role, domain)
             return await self._enforcer.get_users_for_role(role)
         except Exception as e:
-            logger.error(f"RBAC get_users_for_role error: {e}")
+            logger.error("RBAC get_users_for_role error", exc=e)
             return []
 
     async def has_role_for_user(
@@ -269,7 +270,7 @@ class RBACEnforcer(Singleton):
                 return role in roles
             return await self._enforcer.has_role_for_user(user_str, role)
         except Exception as e:
-            logger.error(f"RBAC has_role_for_user error: {e}")
+            logger.error("RBAC has_role_for_user error", exc=e)
             return False
 
     async def get_permissions_for_user(
@@ -289,7 +290,7 @@ class RBACEnforcer(Singleton):
                 )
             return await self._enforcer.get_implicit_permissions_for_user(user_str)
         except Exception as e:
-            logger.error(f"RBAC get_permissions_for_user error: {e}")
+            logger.error("RBAC get_permissions_for_user error", exc=e)
             return []
 
     async def delete_user(self, user: Union[str, int]) -> bool:
@@ -301,7 +302,7 @@ class RBACEnforcer(Singleton):
         try:
             return await self._enforcer.delete_user(user_str)
         except Exception as e:
-            logger.error(f"RBAC delete_user error: {e}")
+            logger.error("RBAC delete_user error", exc=e)
             return False
 
     async def delete_role(self, role: str) -> bool:
@@ -311,7 +312,7 @@ class RBACEnforcer(Singleton):
         try:
             return await self._enforcer.delete_role(role)
         except Exception as e:
-            logger.error(f"RBAC delete_role error: {e}")
+            logger.error("RBAC delete_role error", exc=e)
             return False
 
 
@@ -333,19 +334,15 @@ class RequirePermission:
         user_id = getattr(request.state, "user_id", None)
 
         if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required",
-            )
+            raise ErrUnauthorized.new("Authentication required")
 
         domain = self.domain
         if domain is None:
             domain = getattr(request.state, "domain", None)
 
         if not await enforcer.enforce(user_id, self.resource, self.action, domain):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: {self.action} on {self.resource}",
+            raise ErrForbidden.new(
+                f"Permission denied: {self.action} on {self.resource}"
             )
 
 
@@ -362,18 +359,11 @@ def require_role(role: str, domain: Optional[str] = None):
         user_id = getattr(request.state, "user_id", None)
 
         if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required",
-            )
+            raise ErrUnauthorized.new("Authentication required")
 
         check_domain = domain or getattr(request.state, "domain", None)
 
         if not await enforcer.has_role_for_user(user_id, role, check_domain):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Role required: {role}",
-            )
+            raise ErrForbidden.new(f"Role required: {role}")
 
     return check_role
-

@@ -72,6 +72,13 @@ class MySQLIntrospector:
             self.connection.close()
             self.connection = None
 
+    def __enter__(self) -> "MySQLIntrospector":
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.disconnect()
+
     def get_tables(self, table_names: Optional[List[str]] = None) -> List[TableInfo]:
         if not self.connection:
             raise RuntimeError("Not connected to database")

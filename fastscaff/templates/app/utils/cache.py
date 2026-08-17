@@ -172,7 +172,8 @@ class MultiLevelCache:
             return value
 
         except Exception as e:
-            logger.warning(f"Cache L2 get error: {e}")
+            # Intentional degrade: serve from L1 / miss rather than failing the request.
+            logger.error("cache L2 get error", exc=e)
             return None
 
     async def set(
@@ -203,7 +204,8 @@ class MultiLevelCache:
             )
             return True
         except Exception as e:
-            logger.warning(f"Cache L2 set error: {e}")
+            # Intentional degrade: L1 still updated; L2 write failure is non-fatal.
+            logger.error("cache L2 set error", exc=e)
             return False
 
     async def delete(self, key: str) -> bool:
@@ -217,7 +219,8 @@ class MultiLevelCache:
             await self.redis.delete(redis_key)
             return True
         except Exception as e:
-            logger.warning(f"Cache L2 delete error: {e}")
+            # Intentional degrade: L1 deleted; L2 delete failure is non-fatal.
+            logger.error("cache L2 delete error", exc=e)
             return False
 
     async def _acquire_lock(self, key: str) -> bool:
@@ -234,8 +237,8 @@ class MultiLevelCache:
             )
             return bool(acquired)
         except Exception as e:
-            # Graceful degradation: allow execution if lock fails
-            logger.warning("cache_lock_acquire_failed", key=key, error=str(e))
+            # Intentional fail-open: allow execution if lock acquisition fails.
+            logger.error("cache lock acquire failed", exc=e, key=key)
             return True
 
     async def _release_lock(self, key: str) -> None:
@@ -246,8 +249,8 @@ class MultiLevelCache:
             lock_key = self._make_lock_key(key)
             await self.redis.delete(lock_key)
         except Exception as e:
-            # Lock will expire anyway, just log the error
-            logger.warning("cache_lock_release_failed", key=key, error=str(e))
+            # Lock will expire anyway; keep primary path succeeding.
+            logger.error("cache lock release failed", exc=e, key=key)
 
     async def get_or_set(
         self,
@@ -384,7 +387,7 @@ class MultiLevelCache:
 
             return len(keys)
         except Exception as e:
-            logger.warning(f"Cache invalidate_pattern error: {e}")
+            logger.error("cache invalidate_pattern error", exc=e)
             return 0
 
 

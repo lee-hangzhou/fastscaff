@@ -4,13 +4,13 @@ import json
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
-from fastapi import Request, status
-from fastapi.responses import JSONResponse
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from app.core.config import settings
-from app.core.logger import logger
+from app.exceptions.codes import ErrInvalidParams, ErrUnauthorized
+from app.exceptions.handlers import build_error_response, log_app_error
 
 
 class SignatureMiddleware(BaseHTTPMiddleware):
@@ -36,7 +36,6 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         self._used_nonces: Dict[str, float] = {}
 
     def _is_whitelisted(self, path: str) -> bool:
-        """Check if path is whitelisted."""
         if path in self.whitelist:
             return True
 
@@ -47,7 +46,6 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         return False
 
     def _cleanup_nonces(self) -> None:
-        """Remove expired nonces from memory."""
         now = time.time()
         expired = [
             nonce
@@ -63,7 +61,6 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         timestamp: str,
         nonce: str,
     ) -> str:
-        """Calculate HMAC-SHA256 signature."""
         if self.secret_key is None:
             raise ValueError("Secret key is not configured")
 
@@ -71,13 +68,11 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         param_str = "&".join(f"{k}={v}" for k, v in sorted_params)
         sign_str = f"{param_str}&timestamp={timestamp}&nonce={nonce}"
 
-        signature = hmac.new(
+        return hmac.new(
             self.secret_key.encode(),
             sign_str.encode(),
             hashlib.sha256,
         ).hexdigest()
-
-        return signature
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         if not self.enabled or not self.secret_key:
@@ -93,49 +88,29 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         signature = request.headers.get("X-Signature")
 
         if not timestamp or not nonce or not signature:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "code": 400,
-                    "message": "Missing signature headers",
-                    "data": None,
-                },
-            )
+            err = ErrInvalidParams.new("Missing signature headers")
+            log_app_error(request, err)
+            return build_error_response(err)
 
         try:
             ts = int(timestamp)
         except ValueError:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "code": 400,
-                    "message": "Invalid timestamp format",
-                    "data": None,
-                },
-            )
+            err = ErrInvalidParams.new("Invalid timestamp format")
+            log_app_error(request, err)
+            return build_error_response(err)
 
         now = int(time.time())
         if abs(now - ts) > self.timestamp_tolerance:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "code": 400,
-                    "message": "Request timestamp expired",
-                    "data": None,
-                },
-            )
+            err = ErrInvalidParams.new("Request timestamp expired")
+            log_app_error(request, err)
+            return build_error_response(err)
 
         self._cleanup_nonces()
 
         if nonce in self._used_nonces:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "code": 400,
-                    "message": "Duplicate request (replay attack detected)",
-                    "data": None,
-                },
-            )
+            err = ErrInvalidParams.new("Duplicate request (replay attack detected)")
+            log_app_error(request, err)
+            return build_error_response(err)
 
         params: Dict[str, Any] = dict(request.query_params)
 
@@ -154,27 +129,14 @@ class SignatureMiddleware(BaseHTTPMiddleware):
 
                         request._receive = receive
                 except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
-                    # Body is not JSON, skip body params (e.g., form data)
                     pass
 
         expected_signature = self._calculate_signature(params, timestamp, nonce)
 
         if not hmac.compare_digest(signature, expected_signature):
-            client_ip = request.client.host if request.client else "unknown"
-            logger.warning(
-                "invalid_signature",
-                method=request.method,
-                path=path,
-                client_ip=client_ip,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={
-                    "code": 401,
-                    "message": "Invalid signature",
-                    "data": None,
-                },
-            )
+            err = ErrUnauthorized.new("Invalid signature")
+            log_app_error(request, err)
+            return build_error_response(err)
 
         self._used_nonces[nonce] = time.time()
 

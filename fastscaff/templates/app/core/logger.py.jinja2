@@ -1,128 +1,130 @@
+import json
 import logging
 import sys
-from typing import Any, List, Optional
+import traceback
+from contextvars import ContextVar
+from typing import Any, Dict, Optional
 
-import structlog
-from structlog.contextvars import bind_contextvars, clear_contextvars, unbind_contextvars
-from structlog.types import EventDict, Processor, WrappedLogger
+_EXTRA_FIELDS: ContextVar[Dict[str, Any]] = ContextVar("fastscaff_log_extra", default={})
 
-from app.core.config import settings
-
-
-def _add_caller_info(
-    _logger: WrappedLogger,
-    _method_name: str,
-    event_dict: EventDict,
-) -> EventDict:
-    """Add caller information (module, function, line) to log record."""
-    record = event_dict.get("_record")
-    if record is not None and isinstance(record, logging.LogRecord):
-        event_dict["module"] = record.module
-        event_dict["function"] = record.funcName
-        event_dict["line"] = record.lineno
-    return event_dict
+_LEVEL_NAMES = {
+    logging.DEBUG: "DEBUG",
+    logging.INFO: "INFO",
+    logging.WARNING: "WARN",
+    logging.ERROR: "ERROR",
+    logging.CRITICAL: "ERROR",
+}
 
 
-def _drop_color_message_key(
-    _logger: WrappedLogger,
-    _method_name: str,
-    event_dict: EventDict,
-) -> EventDict:
-    """Remove color_message key added by uvicorn."""
-    event_dict.pop("color_message", None)
-    return event_dict
+def format_error(exc: BaseException) -> str:
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
-def get_shared_processors() -> List[Processor]:
-    return [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        _drop_color_message_key,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.UnicodeDecoder(),
-    ]
+class JsonFormatter(logging.Formatter):
+    """Render LogRecord as a lean, collection-friendly JSON object."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        entry: Dict[str, Any] = {
+            "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": _LEVEL_NAMES.get(record.levelno, record.levelname),
+            "msg": record.getMessage(),
+            "source": {
+                "file": record.pathname,
+                "line": record.lineno,
+                "function": record.funcName,
+            },
+        }
+
+        for key, value in _EXTRA_FIELDS.get().items():
+            if value is not None and value != "":
+                entry[key] = value
+
+        fields = getattr(record, "extra_fields", None)
+        if isinstance(fields, dict):
+            for key, value in fields.items():
+                if value is not None and value != "":
+                    entry[key] = value
+
+        if "error" not in entry and record.exc_info is not None:
+            exc = record.exc_info[1]
+            if isinstance(exc, BaseException):
+                entry["error"] = format_error(exc)
+
+        try:
+            return json.dumps(entry, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            entry["msg"] = str(entry.get("msg", ""))
+            return json.dumps(entry, ensure_ascii=False, default=str)
 
 
-def configure_stdlib_logging(log_level: str, json_logs: bool) -> None:
-    shared_processors = get_shared_processors()
-
-    if json_logs:
-        renderer: Processor = structlog.processors.JSONRenderer(ensure_ascii=False)
-    else:
-        renderer = structlog.dev.ConsoleRenderer(colors=True)
-
-    formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=shared_processors,
-        processors=[
-            _add_caller_info,
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            renderer,
-        ],
-    )
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-
+def setup_logging(*, log_level: str = "INFO", json_logs: bool = True) -> None:
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
+
+    handler = logging.StreamHandler(sys.stdout)
+    if json_logs:
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(pathname)s:%(lineno)s %(message)s")
+        )
     root_logger.addHandler(handler)
     root_logger.setLevel(log_level.upper())
 
-    # Configure specific loggers
     for logger_name in ["uvicorn", "uvicorn.error", "uvicorn.access"]:
         logging.getLogger(logger_name).handlers.clear()
         logging.getLogger(logger_name).propagate = True
 
-    # Quiet noisy loggers
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-def configure_structlog() -> None:
-    # Use shared processors + wrap_for_formatter to let stdlib do final rendering
-    # This avoids double JSON encoding
-    processors: List[Processor] = [
-        *get_shared_processors(),
-        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-    ]
-
-    structlog.configure(
-        processors=processors,
-        wrapper_class=structlog.stdlib.BoundLogger,
-        context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
-
-
-def setup_logging() -> None:
-    log_level = getattr(settings, "LOG_LEVEL", "INFO")
-    log_format = getattr(settings, "LOG_FORMAT", "json")
-    json_logs = log_format.lower() == "json"
-
-    configure_stdlib_logging(log_level, json_logs)
-    configure_structlog()
-
-
 def bind_context(**kwargs: Any) -> None:
-    bind_contextvars(**kwargs)
-
-
-def unbind_context(*keys: str) -> None:
-    unbind_contextvars(*keys)
+    merged = dict(_EXTRA_FIELDS.get())
+    merged.update(kwargs)
+    _EXTRA_FIELDS.set(merged)
 
 
 def clear_context() -> None:
-    clear_contextvars()
+    _EXTRA_FIELDS.set({})
 
 
-def get_logger(name: Optional[str] = None) -> structlog.stdlib.BoundLogger:
-    return structlog.get_logger(name)
+class StructuredLogger:
+    """stdlib logger wrapper that accepts structured keyword fields."""
+
+    def __init__(self, name: str) -> None:
+        self._logger = logging.getLogger(name)
+
+    def _log(
+        self,
+        level: int,
+        msg: str,
+        *,
+        exc: Optional[BaseException] = None,
+        stacklevel: int = 3,
+        **fields: Any,
+    ) -> None:
+        payload = dict(fields)
+        if exc is not None and "error" not in payload:
+            payload["error"] = format_error(exc)
+        self._logger.log(
+            level,
+            msg,
+            extra={"extra_fields": payload},
+            stacklevel=stacklevel,
+        )
+
+    def debug(self, msg: str, **fields: Any) -> None:
+        self._log(logging.DEBUG, msg, **fields)
+
+    def info(self, msg: str, **fields: Any) -> None:
+        self._log(logging.INFO, msg, **fields)
+
+    def warning(self, msg: str, **fields: Any) -> None:
+        self._log(logging.WARNING, msg, **fields)
+
+    def error(self, msg: str, **fields: Any) -> None:
+        self._log(logging.ERROR, msg, **fields)
 
 
-setup_logging()
-
-logger: structlog.stdlib.BoundLogger = get_logger("{{ project_name_snake }}")
+logger = StructuredLogger("{{ project_name_snake }}")

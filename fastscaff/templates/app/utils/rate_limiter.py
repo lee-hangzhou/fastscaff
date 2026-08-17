@@ -2,10 +2,13 @@ import asyncio
 import time
 from typing import Callable, Dict, Optional
 
-from fastapi import HTTPException, Request, Response, status
+from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.logger import logger
+from app.exceptions.base import AppError
+from app.exceptions.codes import ErrInternal, ErrTooManyRequests
+from app.exceptions.handlers import build_error_response, log_app_error
 
 
 class TokenBucket:
@@ -65,7 +68,6 @@ class MemoryRateLimiter:
 
     @staticmethod
     def _default_key_func(request: Request) -> str:
-        """Extract client identifier from request."""
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
             return forwarded.split(",")[0].strip()
@@ -76,7 +78,6 @@ class MemoryRateLimiter:
         return "unknown"
 
     async def _get_bucket(self, key: str) -> TokenBucket:
-        """Get or create a token bucket for the given key."""
         async with self._buckets_lock:
             if key not in self._buckets:
                 self._buckets[key] = TokenBucket(
@@ -89,7 +90,6 @@ class MemoryRateLimiter:
             return self._buckets[key]
 
     async def _maybe_cleanup(self) -> None:
-        """Remove expired buckets periodically."""
         now = time.monotonic()
         if now - self._last_cleanup < self.cleanup_interval:
             return
@@ -106,23 +106,20 @@ class MemoryRateLimiter:
             del self._buckets[key]
 
         if expired_keys:
-            logger.debug(f"Rate limiter cleanup: removed {len(expired_keys)} buckets")
+            logger.debug(
+                "Rate limiter cleanup",
+                removed=len(expired_keys),
+            )
 
     async def check(self, request: Request) -> None:
-        """Check if request is allowed. Raises HTTPException 429 if exceeded."""
+        """Raise AppError when rate limit exceeded."""
         key = self.key_func(request)
         bucket = await self._get_bucket(key)
 
         if not await bucket.acquire():
-            retry_after = int(bucket.retry_after) + 1
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Rate limit exceeded",
-                headers={"Retry-After": str(retry_after)},
-            )
+            raise ErrTooManyRequests.new()
 
     async def __call__(self, request: Request) -> None:
-        """FastAPI dependency interface."""
         await self.check(request)
 
 
@@ -147,7 +144,6 @@ class RedisRateLimiter:
 
     @staticmethod
     def _default_key_func(request: Request) -> str:
-        """Extract client identifier from request."""
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
             return forwarded.split(",")[0].strip()
@@ -158,7 +154,7 @@ class RedisRateLimiter:
         return "unknown"
 
     async def check(self, request: Request) -> None:
-        """Check if request is allowed. Raises HTTPException 429 if exceeded."""
+        """Raise AppError when rate limit exceeded."""
         key = f"{self.key_prefix}:{self.key_func(request)}"
         now = time.time()
         window_start = now - self.window_seconds
@@ -174,35 +170,17 @@ class RedisRateLimiter:
             request_count = results[2]
 
             if request_count > self.requests_per_window:
-                oldest = await self.redis.client.zrange(key, 0, 0, withscores=True)
-                if oldest:
-                    retry_after = int(oldest[0][1] + self.window_seconds - now) + 1
-                else:
-                    retry_after = self.window_seconds
+                raise ErrTooManyRequests.new()
 
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded",
-                    headers={
-                        "Retry-After": str(max(1, retry_after)),
-                        "X-RateLimit-Limit": str(self.requests_per_window),
-                        "X-RateLimit-Remaining": "0",
-                        "X-RateLimit-Reset": str(int(now + retry_after)),
-                    },
-                )
-
-        except HTTPException:
+        except AppError:
             raise
         except (ConnectionError, TimeoutError, OSError) as e:
-            logger.warning("redis_rate_limiter_error", error=str(e))
+            # Intentional fail-open when Redis is unavailable (unless configured otherwise).
+            logger.error("redis rate limiter error", exc=e)
             if not self.fail_open:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Rate limiting service unavailable",
-                ) from e
+                raise ErrInternal.wrap(e, "Rate limiting service unavailable") from e
 
     async def __call__(self, request: Request) -> None:
-        """FastAPI dependency interface."""
         await self.check(request)
 
 
@@ -221,5 +199,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.url.path in self.exclude_paths:
             return await call_next(request)
 
-        await self.limiter.check(request)
+        try:
+            await self.limiter.check(request)
+        except AppError as exc:
+            log_app_error(request, exc)
+            return build_error_response(exc)
+
         return await call_next(request)

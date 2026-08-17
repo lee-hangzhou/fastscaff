@@ -8,7 +8,7 @@ T = TypeVar("T")
 class Response(BaseModel, Generic[T]):
     code: int = Field(default=0)
     data: Optional[T] = Field(default=None)
-    msg: str = Field(default="success")
+    message: str = Field(default="Success")
 
 
 class Pager(BaseModel):

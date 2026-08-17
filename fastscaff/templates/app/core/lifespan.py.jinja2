@@ -2,21 +2,21 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-{% if with_rbac %}
 from app.core.config import settings
 from app.core.database import db
-from app.core.logger import logger
+from app.core.logger import logger, setup_logging
+from app.core.redis import redis_client
+{% if with_rbac %}
 from app.core.rbac import enforcer
-from app.core.redis import redis_client
-{% else %}
-from app.core.database import db
-from app.core.logger import logger
-from app.core.redis import redis_client
 {% endif %}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _ = app  # FastAPI requires app parameter
+    setup_logging(
+        log_level=settings.LOG_LEVEL,
+        json_logs=settings.LOG_FORMAT.lower() == "json",
+    )
     logger.info("Starting application")
 
     await db.connect()

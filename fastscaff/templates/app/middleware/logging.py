@@ -9,77 +9,79 @@ from app.core.logger import logger
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    MAX_BODY_LOG_SIZE = 1_000_000
+    MAX_BODY_LOG_SIZE = 4096
 
     def __init__(
         self,
         app,
         log_request_body: bool = True,
-        log_query_params: bool = True,
+        log_response_body: bool = True,
+        log_query: bool = True,
         exclude_paths: Optional[list[str]] = None,
     ) -> None:
         super().__init__(app)
         self.log_request_body = log_request_body
-        self.log_query_params = log_query_params
+        self.log_response_body = log_response_body
+        self.log_query = log_query
         self.exclude_paths = set(exclude_paths or ["/health", "/metrics"])
 
+    def _should_skip(self, path: str) -> bool:
+        for excluded in self.exclude_paths:
+            if path == excluded or path.startswith(excluded.rstrip("/") + "/"):
+                return True
+            # Match /api/v1/health when excluded is /health
+            if path.endswith(excluded) or f"{excluded}/" in path:
+                return True
+        return False
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if request.url.path in self.exclude_paths:
+        if self._should_skip(request.url.path):
             return await call_next(request)
 
         request_body: Optional[str] = None
-        query_params: Optional[dict[str, str]] = None
-
         if self.log_request_body:
             request_body = await self._get_request_body(request)
-        if self.log_query_params:
-            params = dict(request.query_params)
-            query_params = params if params else None
 
         start_time = time.perf_counter()
 
         try:
             response = await call_next(request)
         except Exception:
-            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            logger.exception(
-                "request_failed",
-                method=request.method,
-                path=request.url.path,
-                duration_ms=duration_ms,
-                request_body=request_body,
-                query_params=query_params,
-                client_ip=self._get_client_ip(request),
-            )
+            # Handlers own error logging; avoid duplicate stacks here.
             raise
 
-        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        latency = self._format_latency(time.perf_counter() - start_time)
+        response_body: Optional[str] = None
+        if self.log_response_body:
+            response, response_body = await self._capture_response_body(response)
 
-        log_kwargs: Dict[str, Union[str, int, float, dict, None]] = {
+        fields: Dict[str, Union[str, int, None]] = {
             "method": request.method,
             "path": request.url.path,
-            "status_code": response.status_code,
-            "duration_ms": duration_ms,
-            "client_ip": self._get_client_ip(request),
+            "query": (request.url.query or None) if self.log_query else None,
+            "status": response.status_code,
+            "latency": latency,
+            "ip": self._get_client_ip(request),
+            "request": request_body,
+            "response": response_body,
+            "trace_id": getattr(request.state, "trace_id", None),
         }
 
-        if request_body:
-            log_kwargs["request_body"] = request_body
-        if query_params:
-            log_kwargs["query_params"] = query_params
-
         if response.status_code >= 500:
-            logger.error("request_completed", **log_kwargs)
+            logger.error("access log", **fields)
         elif response.status_code >= 400:
-            logger.warning("request_completed", **log_kwargs)
+            logger.warning("access log", **fields)
         else:
-            logger.info("request_completed", **log_kwargs)
+            logger.info("access log", **fields)
 
         return response
 
     @staticmethod
+    def _format_latency(seconds: float) -> str:
+        return f"{seconds * 1000:.1f}ms"
+
+    @staticmethod
     def _get_client_ip(request: Request) -> str:
-        """Extract client IP from request, considering proxies."""
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
             return forwarded.split(",")[0].strip()
@@ -88,7 +90,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return "unknown"
 
     async def _get_request_body(self, request: Request) -> Optional[str]:
-        """Read and return request body for logging."""
         if request.method not in {"POST", "PUT", "PATCH"}:
             return None
 
@@ -103,10 +104,25 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 return {"type": "http.request", "body": body_bytes}
 
             request._receive = receive
-
-            if len(body_bytes) > self.MAX_BODY_LOG_SIZE:
-                return "[body too large]"
-
-            return body_bytes.decode("utf-8") if body_bytes else None
+            return self._truncate(body_bytes)
         except (UnicodeDecodeError, RuntimeError):
             return "[unable to read body]"
+
+    async def _capture_response_body(
+        self,
+        response: Response,
+    ) -> tuple[Response, Optional[str]]:
+        body = getattr(response, "body", None)
+        if body is None:
+            return response, None
+        if not isinstance(body, (bytes, bytearray)):
+            return response, None
+        return response, self._truncate(bytes(body))
+
+    def _truncate(self, body_bytes: bytes) -> Optional[str]:
+        if not body_bytes:
+            return None
+        text = body_bytes.decode("utf-8", errors="replace")
+        if len(body_bytes) > self.MAX_BODY_LOG_SIZE:
+            return text[: self.MAX_BODY_LOG_SIZE] + "...[truncated]"
+        return text

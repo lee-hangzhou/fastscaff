@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
 
 from app.schemas.auth import LoginRequest, LoginResponse, RefreshRequest, TokenResponse
 from app.schemas.base import Response
 from app.services import registry
+from app.utils.auth import auth_required
 
 router = APIRouter()
 
@@ -19,7 +20,6 @@ async def refresh_token(request: RefreshRequest) -> Response[TokenResponse]:
     return Response(data=result)
 
 
-@router.post("/logout")
-async def logout(request: Request) -> Response[None]:
-    _ = request.state.user_id
-    return Response(data=None, msg="Logged out")
+@router.post("/logout", dependencies=[Depends(auth_required)])
+async def logout() -> Response[None]:
+    return Response(data=None, message="Logged out")

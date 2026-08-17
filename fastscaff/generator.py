@@ -243,6 +243,7 @@ class ProjectGenerator:
         static_files = [
             ("app/exceptions/__init__.py", "app/exceptions/__init__.py"),
             ("app/exceptions/base.py", "app/exceptions/base.py"),
+            ("app/exceptions/codes.py", "app/exceptions/codes.py"),
             ("app/exceptions/handlers.py", "app/exceptions/handlers.py"),
         ]
         for src_path, output_name in static_files:
