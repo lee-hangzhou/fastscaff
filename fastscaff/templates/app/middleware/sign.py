@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -117,17 +117,16 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         if request.method in ("POST", "PUT", "PATCH"):
             content_type = request.headers.get("content-type", "")
             if "application/json" in content_type:
+                # Do not replace request._receive after reading the body. Starlette's
+                # _CachedRequest already replays a cached body downstream once and then waits for
+                # http.disconnect; a hand-rolled stand-in yields http.request forever, which makes
+                # a streaming response's disconnect listener raise RuntimeError.
                 try:
                     body = await request.body()
                     if body:
                         body_params = json.loads(body)
                         if isinstance(body_params, dict):
                             params.update(body_params)
-
-                        async def receive() -> Dict[str, Union[str, bytes]]:
-                            return {"type": "http.request", "body": body}
-
-                        request._receive = receive
                 except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
                     pass
 
