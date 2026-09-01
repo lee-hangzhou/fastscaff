@@ -55,6 +55,27 @@ m = g(r.sub, p.sub, r.dom) && r.dom == p.dom && r.obj == p.obj && r.act == p.act
 """
 
 
+def to_sqlalchemy_async_url(url: str) -> str:
+    """Normalize Tortoise/sync DB URLs to SQLAlchemy async URLs for Casbin.
+
+    Casbin uses casbin-async-sqlalchemy-adapter, which needs a SQLAlchemy async
+    dialect even when the app ORM is Tortoise (sqlite://, mysql://, postgres://).
+    """
+    if "+aiomysql://" in url or "+aiosqlite://" in url or "+asyncpg://" in url:
+        return url
+    if url.startswith("sqlite://"):
+        # sqlite://./app.db  -> sqlite+aiosqlite:///./app.db
+        # sqlite:///abs/path -> sqlite+aiosqlite:////abs/path
+        return "sqlite+aiosqlite:///" + url[len("sqlite://") :]
+    if url.startswith("mysql://"):
+        return "mysql+aiomysql://" + url[len("mysql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://") :]
+    if url.startswith("postgresql://") and "+asyncpg://" not in url:
+        return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    return url
+
+
 class RBACEnforcer(Singleton):
     """Async RBAC enforcer using Casbin."""
 
@@ -98,13 +119,15 @@ class RBACEnforcer(Singleton):
             try:
                 if adapter is None or adapter == "memory":
                     enforcer_instance = casbin.AsyncEnforcer(model_path)
-                elif adapter.startswith(("postgresql", "mysql", "sqlite")):
-                    from casbin_async_sqlalchemy_adapter import Adapter
-
-                    db_adapter = Adapter(adapter)
-                    enforcer_instance = casbin.AsyncEnforcer(model_path, db_adapter)
                 else:
-                    enforcer_instance = casbin.AsyncEnforcer(model_path, adapter)
+                    sa_url = to_sqlalchemy_async_url(adapter)
+                    if sa_url.startswith(("postgresql", "mysql", "sqlite")):
+                        from casbin_async_sqlalchemy_adapter import Adapter
+
+                        db_adapter = Adapter(sa_url)
+                        enforcer_instance = casbin.AsyncEnforcer(model_path, db_adapter)
+                    else:
+                        enforcer_instance = casbin.AsyncEnforcer(model_path, adapter)
 
                 await enforcer_instance.load_policy()
                 self._enforcer = enforcer_instance

@@ -15,6 +15,9 @@ class ColumnInfo:
     is_auto_increment: bool
     comment: Optional[str]
     extra: str
+    max_length: Optional[int] = None
+    numeric_precision: Optional[int] = None
+    numeric_scale: Optional[int] = None
 
 
 @dataclass
@@ -149,7 +152,10 @@ class MySQLIntrospector:
                     COLUMN_DEFAULT,
                     COLUMN_KEY,
                     EXTRA,
-                    COLUMN_COMMENT
+                    COLUMN_COMMENT,
+                    CHARACTER_MAXIMUM_LENGTH,
+                    NUMERIC_PRECISION,
+                    NUMERIC_SCALE
                 FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
                 ORDER BY ORDINAL_POSITION
@@ -166,9 +172,12 @@ class MySQLIntrospector:
                         is_nullable=row["IS_NULLABLE"] == "YES",
                         column_default=row["COLUMN_DEFAULT"],
                         is_primary_key=row["COLUMN_KEY"] == "PRI",
-                        is_auto_increment="auto_increment" in row["EXTRA"].lower(),
+                        is_auto_increment="auto_increment" in (row["EXTRA"] or "").lower(),
                         comment=row["COLUMN_COMMENT"] or None,
-                        extra=row["EXTRA"],
+                        extra=row["EXTRA"] or "",
+                        max_length=row["CHARACTER_MAXIMUM_LENGTH"],
+                        numeric_precision=row["NUMERIC_PRECISION"],
+                        numeric_scale=row["NUMERIC_SCALE"],
                     )
                 )
             return columns

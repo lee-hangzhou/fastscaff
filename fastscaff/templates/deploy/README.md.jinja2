@@ -1,0 +1,55 @@
+# {{ project_name }} 部署
+
+两个环境共用同一个 `Dockerfile`，区别只在运行时变量从哪来。
+
+| 环境 | 编排 | 运行时变量来源 |
+|------|------|----------------|
+| 测试 | `docker-compose.yml` | `deploy/.env.test` 占位符，真值由宿主机 `source /etc/profile` 注入 |
+| 生产 | `deployment.yaml`（K8s） | 控制台维护的 ConfigMap `{{ project_name_snake }}-config` 与 Secret `{{ project_name_snake }}-secrets` |
+
+**ConfigMap 与 Secret 不进本仓库。** `deployment.yaml` 只用 `envFrom` 引用对象名。
+
+## 文件
+
+| 文件 | 用途 |
+|------|------|
+| `Dockerfile` | 两段式构建，独立 `/opt/venv`，非 root |
+| `docker-compose.yml` | 测试环境，`build.context` 为仓库根 |
+| `.env.test` | 仅必填/需按环境覆盖的变量，值一律 `${VAR}` 或 `${VAR:-default}` |
+| `deployment.yaml` | 生产 Deployment 与 Service |
+
+## 测试环境
+
+本 Compose **不启动** MySQL / Redis，依赖共享网络上的既有服务：
+
+```bash
+docker network create {{ project_name_snake }}-network
+```
+
+部署前在宿主机注入真值（通常 `source /etc/profile`），至少提供：
+
+- `DATABASE_URL`
+- `REDIS_URL`
+- `JWT_SECRET_KEY`
+
+```bash
+make up
+make down
+```
+
+`make up`：**先 build（旧容器继续对外）→ 再 recreate → 轮询 `/api/v1/health/ready`**。不要先 `down` 再 `up`，否则构建时间也会变成不可用窗口。HTTP 发布在宿主 `8000`。
+
+## 生产环境
+
+镜像推送后，替换 `${IMAGE}` 再 apply：
+
+```bash
+docker build -f deploy/Dockerfile -t <registry>/{{ project_name_snake }}:<tag> .
+IMAGE=<registry>/{{ project_name_snake }}:<tag> envsubst < deploy/deployment.yaml | kubectl apply -f -
+```
+
+生产清单 `maxUnavailable: 0`，滚动时先起新副本再撤旧副本。
+
+## 日志
+
+应用只往 stdout 打 JSON，由采集器接管；不要在镜像内写日志文件。

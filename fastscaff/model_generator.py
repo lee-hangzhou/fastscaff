@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Set
+from typing import List, Set, Tuple
 
 from fastscaff.introspector import ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo
 
@@ -74,6 +74,18 @@ def snake_to_pascal(name: str) -> str:
     return "".join(word.capitalize() for word in name.split("_"))
 
 
+def _single_column_uniques(indexes: List[IndexInfo]) -> Set[str]:
+    return {idx.columns[0] for idx in indexes if idx.is_unique and len(idx.columns) == 1}
+
+
+def _composite_unique_indexes(indexes: List[IndexInfo]) -> List[IndexInfo]:
+    return [idx for idx in indexes if idx.is_unique and len(idx.columns) > 1]
+
+
+def _non_unique_indexes(indexes: List[IndexInfo]) -> List[IndexInfo]:
+    return [idx for idx in indexes if not idx.is_unique]
+
+
 class SQLAlchemyModelGenerator:
     def __init__(self, tables: List[TableInfo]) -> None:
         self.tables = tables
@@ -83,20 +95,32 @@ class SQLAlchemyModelGenerator:
         models = [self._generate_model(table) for table in self.tables]
         return imports + "\n\n" + "\n\n".join(models) + "\n"
 
-    def _generate_imports(self) -> str:
+    def _collect_types(self, tables: List[TableInfo]) -> Tuple[Set[str], bool, bool, bool]:
         type_set: Set[str] = set()
         has_index = False
+        has_unique_constraint = False
         has_foreign_key = False
 
-        for table in self.tables:
+        for table in tables:
             for col in table.columns:
                 sa_type = MYSQL_TO_SQLALCHEMY.get(col.data_type.lower(), "String")
                 type_set.add(sa_type)
-            if table.indexes:
+            if _non_unique_indexes(table.indexes):
                 has_index = True
+            if _composite_unique_indexes(table.indexes):
+                has_unique_constraint = True
             if table.foreign_keys:
                 has_foreign_key = True
 
+        return type_set, has_index, has_unique_constraint, has_foreign_key
+
+    def _format_imports(
+        self,
+        type_set: Set[str],
+        has_index: bool,
+        has_unique_constraint: bool,
+        has_foreign_key: bool,
+    ) -> str:
         type_imports = ", ".join(sorted(type_set))
         lines = [
             "from datetime import datetime",
@@ -105,39 +129,31 @@ class SQLAlchemyModelGenerator:
             f"from sqlalchemy import Column, {type_imports}",
         ]
 
+        extra_imports: List[str] = []
         if has_index:
-            lines.append("from sqlalchemy import Index")
+            extra_imports.append("Index")
+        if has_unique_constraint:
+            extra_imports.append("UniqueConstraint")
+        if extra_imports:
+            lines.append(f"from sqlalchemy import {', '.join(extra_imports)}")
         if has_foreign_key:
             lines.append("from sqlalchemy import ForeignKey")
             lines.append("from sqlalchemy.orm import relationship")
 
+        # Use Base (not BaseModel) so introspected columns are not duplicated
+        # against the scaffold's id/created_at/updated_at mixins.
         lines.append("")
-        lines.append("from app.models.base import BaseModel")
+        lines.append("from app.models.base import Base")
 
         return "\n".join(lines)
+
+    def _generate_imports(self) -> str:
+        type_set, has_index, has_unique, has_fk = self._collect_types(self.tables)
+        return self._format_imports(type_set, has_index, has_unique, has_fk)
 
     def _generate_imports_for_table(self, table: TableInfo) -> str:
-        type_set: Set[str] = set()
-        has_index = bool(table.indexes)
-        has_foreign_key = bool(table.foreign_keys)
-        for col in table.columns:
-            sa_type = MYSQL_TO_SQLALCHEMY.get(col.data_type.lower(), "String")
-            type_set.add(sa_type)
-        type_imports = ", ".join(sorted(type_set))
-        lines = [
-            "from datetime import datetime",
-            "from typing import Optional",
-            "",
-            f"from sqlalchemy import Column, {type_imports}",
-        ]
-        if has_index:
-            lines.append("from sqlalchemy import Index")
-        if has_foreign_key:
-            lines.append("from sqlalchemy import ForeignKey")
-            lines.append("from sqlalchemy.orm import relationship")
-        lines.append("")
-        lines.append("from app.models.base import BaseModel")
-        return "\n".join(lines)
+        type_set, has_index, has_unique, has_fk = self._collect_types([table])
+        return self._format_imports(type_set, has_index, has_unique, has_fk)
 
     def generate_single(self, table: TableInfo) -> str:
         imports = self._generate_imports_for_table(table)
@@ -147,30 +163,23 @@ class SQLAlchemyModelGenerator:
     def _generate_model(self, table: TableInfo) -> str:
         class_name = snake_to_pascal(table.name)
         lines = []
+        unique_cols = _single_column_uniques(table.indexes)
 
-        # Class definition with docstring
-        lines.append(f"class {class_name}(BaseModel):")
+        lines.append(f"class {class_name}(Base):")
         if table.comment:
             lines.append(f'    """{table.comment}"""')
         lines.append(f'    __tablename__ = "{table.name}"')
         lines.append("")
 
-        # Columns
         for col in table.columns:
-            col_def = self._generate_column(col, table.foreign_keys)
+            col_def = self._generate_column(col, table.foreign_keys, unique_cols)
             lines.append(f"    {col_def}")
 
-        # Indexes (non-unique indexes only, unique is handled in column)
-        non_pk_indexes = [idx for idx in table.indexes if not idx.is_unique]
-        if non_pk_indexes:
+        table_args = self._generate_table_args(table.indexes)
+        if table_args:
             lines.append("")
-            lines.append("    __table_args__ = (")
-            for idx in non_pk_indexes:
-                cols = ", ".join(f'"{c}"' for c in idx.columns)
-                lines.append(f'        Index("{idx.name}", {cols}),')
-            lines.append("    )")
+            lines.extend(table_args)
 
-        # Relationships
         if table.foreign_keys:
             lines.append("")
             for fk in table.foreign_keys:
@@ -179,26 +188,48 @@ class SQLAlchemyModelGenerator:
 
         return "\n".join(lines)
 
-    def _generate_column(
-        self, col: ColumnInfo, foreign_keys: List[ForeignKeyInfo]
-    ) -> str:
+    def _generate_table_args(self, indexes: List[IndexInfo]) -> List[str]:
+        non_unique = _non_unique_indexes(indexes)
+        composite_unique = _composite_unique_indexes(indexes)
+        if not non_unique and not composite_unique:
+            return []
+
+        lines = ["    __table_args__ = ("]
+        for idx in non_unique:
+            cols = ", ".join(f'"{c}"' for c in idx.columns)
+            lines.append(f'        Index("{idx.name}", {cols}),')
+        for idx in composite_unique:
+            cols = ", ".join(f'"{c}"' for c in idx.columns)
+            lines.append(f'        UniqueConstraint({cols}, name="{idx.name}"),')
+        lines.append("    )")
+        return lines
+
+    def _sa_type_expr(self, col: ColumnInfo) -> str:
         sa_type = MYSQL_TO_SQLALCHEMY.get(col.data_type.lower(), "String")
+        data_type = col.data_type.lower()
 
-        # Build column arguments
-        args = []
+        if sa_type == "String" and data_type in ("char", "varchar", "enum", "set"):
+            length = col.max_length or 255
+            return f"String({length})"
+        if sa_type == "Numeric":
+            precision = col.numeric_precision or 10
+            scale = col.numeric_scale if col.numeric_scale is not None else 0
+            return f"Numeric({precision}, {scale})"
+        return sa_type
 
-        # Check if this column is a foreign key
+    def _generate_column(
+        self,
+        col: ColumnInfo,
+        foreign_keys: List[ForeignKeyInfo],
+        unique_cols: Set[str],
+    ) -> str:
+        args: List[str] = [self._sa_type_expr(col)]
+
         fk = next((f for f in foreign_keys if f.column == col.name), None)
         if fk:
             args.append(f'ForeignKey("{fk.referenced_table}.{fk.referenced_column}")')
 
-        # Type with length for string types
-        if sa_type == "String" and col.data_type.lower() in ("char", "varchar"):
-            args.insert(0, "String(255)")
-        else:
-            args.insert(0, sa_type)
-
-        kwargs = []
+        kwargs: List[str] = []
 
         if col.is_primary_key:
             kwargs.append("primary_key=True")
@@ -206,6 +237,8 @@ class SQLAlchemyModelGenerator:
             kwargs.append("autoincrement=True")
         if not col.is_nullable and not col.is_primary_key:
             kwargs.append("nullable=False")
+        if col.name in unique_cols and not col.is_primary_key:
+            kwargs.append("unique=True")
         if col.column_default is not None:
             if col.column_default.upper() == "CURRENT_TIMESTAMP":
                 kwargs.append("default=datetime.utcnow")
@@ -217,9 +250,7 @@ class SQLAlchemyModelGenerator:
             escaped_comment = col.comment.replace('"', '\\"')
             kwargs.append(f'comment="{escaped_comment}"')
 
-        all_args = args + kwargs
-        args_str = ", ".join(all_args)
-
+        args_str = ", ".join(args + kwargs)
         return f"{col.name} = Column({args_str})"
 
     def _generate_relationship(self, fk: ForeignKeyInfo, table_name: str) -> str:
@@ -238,36 +269,40 @@ class TortoiseModelGenerator:
         return imports + "\n\n" + "\n\n".join(models) + "\n"
 
     def _generate_imports(self) -> str:
-        lines = [
-            "from tortoise import fields",
-            "from tortoise.models import Model",
-        ]
-        return "\n".join(lines)
+        return "\n".join(
+            [
+                "from tortoise import fields",
+                "from tortoise.models import Model",
+            ]
+        )
 
     def _generate_model(self, table: TableInfo) -> str:
         class_name = snake_to_pascal(table.name)
         lines = []
+        unique_cols = _single_column_uniques(table.indexes)
 
         lines.append(f"class {class_name}(Model):")
         if table.comment:
             lines.append(f'    """{table.comment}"""')
         lines.append("")
 
-        # Columns
         for col in table.columns:
-            col_def = self._generate_field(col, table.foreign_keys, table.name)
+            col_def = self._generate_field(col, table.foreign_keys, table.name, unique_cols)
             lines.append(f"    {col_def}")
 
-        # Meta class
         lines.append("")
         lines.append("    class Meta:")
         lines.append(f'        table = "{table.name}"')
 
-        # Indexes
-        indexes = [idx for idx in table.indexes if not idx.is_unique]
-        if indexes:
-            idx_tuples = [tuple(idx.columns) for idx in indexes]
+        non_unique = _non_unique_indexes(table.indexes)
+        if non_unique:
+            idx_tuples = [tuple(idx.columns) for idx in non_unique]
             lines.append(f"        indexes = {idx_tuples}")
+
+        composite_unique = _composite_unique_indexes(table.indexes)
+        if composite_unique:
+            unique_together = [tuple(idx.columns) for idx in composite_unique]
+            lines.append(f"        unique_together = {unique_together}")
 
         return "\n".join(lines)
 
@@ -277,9 +312,12 @@ class TortoiseModelGenerator:
         return imports + "\n\n" + model + "\n"
 
     def _generate_field(
-        self, col: ColumnInfo, foreign_keys: List[ForeignKeyInfo], table_name: str
+        self,
+        col: ColumnInfo,
+        foreign_keys: List[ForeignKeyInfo],
+        table_name: str,
+        unique_cols: Set[str],
     ) -> str:
-        # Check if this column is a foreign key
         fk = next((f for f in foreign_keys if f.column == col.name), None)
         if fk:
             related_class = snake_to_pascal(fk.referenced_table)
@@ -288,22 +326,33 @@ class TortoiseModelGenerator:
                 f'"models.{related_class}", related_name="{table_name}s")'
             )
 
-        field_type = MYSQL_TO_TORTOISE.get(col.data_type.lower(), "CharField")
+        data_type = col.data_type.lower()
+        field_type = MYSQL_TO_TORTOISE.get(data_type, "CharField")
+        kwargs: List[str] = []
 
-        kwargs = []
+        if col.is_primary_key and col.is_auto_increment:
+            pk_field = "BigIntField" if data_type == "bigint" else "IntField"
+            return f"{col.name} = fields.{pk_field}(pk=True)"
 
         if col.is_primary_key:
-            if col.is_auto_increment:
-                return f"{col.name} = fields.IntField(pk=True)"
             kwargs.append("pk=True")
 
         if field_type == "CharField":
-            kwargs.append("max_length=255")
+            length = col.max_length or 255
+            kwargs.append(f"max_length={length}")
+        elif field_type == "DecimalField":
+            max_digits = col.numeric_precision or 10
+            decimal_places = col.numeric_scale if col.numeric_scale is not None else 0
+            kwargs.append(f"max_digits={max_digits}")
+            kwargs.append(f"decimal_places={decimal_places}")
 
         if not col.is_nullable and not col.is_primary_key:
             kwargs.append("null=False")
         elif col.is_nullable:
             kwargs.append("null=True")
+
+        if col.name in unique_cols and not col.is_primary_key:
+            kwargs.append("unique=True")
 
         if col.column_default is not None:
             if col.column_default.upper() == "CURRENT_TIMESTAMP":
@@ -340,4 +389,3 @@ def generate_models(
         file_path.write_text(content, encoding="utf-8")
         written.append(file_path)
     return written
-

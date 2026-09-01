@@ -66,11 +66,16 @@ class ProjectGenerator:
         # Templates (need rendering)
         templates = [
             ("base/env.example.jinja2", ".env.example"),
-            ("base/docker-compose.yml.jinja2", "docker-compose.yml"),
             ("base/pyproject.toml.jinja2", "pyproject.toml"),
             ("base/requirements.txt.jinja2", "requirements.txt"),
             ("base/README.md.jinja2", "README.md"),
+            ("base/AGENTS.md.jinja2", "AGENTS.md"),
             ("base/Makefile.jinja2", "Makefile"),
+            ("deploy/Dockerfile.jinja2", "deploy/Dockerfile"),
+            ("deploy/docker-compose.yml.jinja2", "deploy/docker-compose.yml"),
+            ("deploy/env.test.jinja2", "deploy/.env.test"),
+            ("deploy/deployment.yaml.jinja2", "deploy/deployment.yaml"),
+            ("deploy/README.md.jinja2", "deploy/README.md"),
         ]
         for template_path, output_name in templates:
             self._render_template(template_path, output_name)
@@ -79,7 +84,7 @@ class ProjectGenerator:
         static_files = [
             ("base/gitignore", ".gitignore"),
             ("base/pre-commit-config.yaml", ".pre-commit-config.yaml"),
-            ("base/Dockerfile", "Dockerfile"),
+            ("deploy/dockerignore", ".dockerignore"),
         ]
         for src_path, output_name in static_files:
             self._copy_file(src_path, output_name)

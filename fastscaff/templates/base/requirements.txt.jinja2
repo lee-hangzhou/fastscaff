@@ -4,12 +4,14 @@ pydantic[email]>=2.5.0
 pydantic-settings>=2.1.0
 {% if is_tortoise %}
 tortoise-orm>=0.20.0
-# Uncomment for MySQL: aiomysql>=0.2.0
+# Required by docker-compose (MySQL); also used when DATABASE_URL is mysql://
+aiomysql>=0.2.0
 # Uncomment for PostgreSQL: asyncpg>=0.29.0
 {% else %}
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.19.0
-# Uncomment for MySQL: aiomysql>=0.2.0
+# Required by docker-compose (MySQL); also used when DATABASE_URL is mysql+aiomysql://
+aiomysql>=0.2.0
 # Uncomment for PostgreSQL: asyncpg>=0.29.0
 greenlet>=3.0.0
 {% endif %}
@@ -21,6 +23,11 @@ httpx>=0.26.0
 {% if with_rbac %}
 casbin>=1.36.0
 casbin-async-sqlalchemy-adapter>=1.4.0
+{% if is_tortoise %}
+# Casbin adapter speaks SQLAlchemy async; needed when converting Tortoise sqlite:// URLs
+aiosqlite>=0.19.0
+sqlalchemy[asyncio]>=2.0.0
+{% endif %}
 {% endif %}
 {% if with_celery %}
 celery[redis]>=5.3.0

@@ -97,10 +97,9 @@ myproject/
 │   ├── middleware/          # 请求/响应中间件
 │   ├── exceptions/          # 自定义异常
 │   └── utils/               # 工具函数
+├── deploy/                  # 测试 Compose + 生产 K8s
 ├── tests/
 ├── .env.example
-├── Dockerfile
-├── docker-compose.yml
 ├── Makefile
 └── requirements.txt
 ```
@@ -162,13 +161,14 @@ make dev
 可用的 make 命令:
 
 ```bash
-make dev          # 启动开发服务器
-make test         # 运行测试
-make lint         # 运行 linter
-make format       # 格式化代码
-make docker-up    # 启动所有服务 (Docker)
-make docker-down  # 停止所有服务
+make up            # 测试部署：build → 切换 → 等 ready
+make down          # 停止测试栈
+make dev           # 本机 uvicorn
+make test          # 运行测试
+make lint          # 运行 linter
 ```
+
+部署：测试走 Compose + `deploy/.env.test` 占位（`source /etc/profile` 注入真值）；生产走 `deploy/deployment.yaml`（ConfigMap/Secret）。详见生成项目的 `deploy/README.md`。
 
 如果启用了 Celery:
 

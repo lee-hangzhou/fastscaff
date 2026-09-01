@@ -1,0 +1,66 @@
+name: {{ project_name_snake }}
+
+services:
+  app:
+    container_name: {{ project_name_snake }}
+    image: {{ project_name_snake }}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - .env.test
+    labels:
+      - "io.portainer.accesscontrol.teams={{ project_name_snake }}"
+    ports:
+      - "8000:8000"
+    networks:
+      - {{ project_name_snake }}-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=5).read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+{% if with_celery %}
+
+  celery-worker:
+    container_name: {{ project_name_snake }}-celery-worker
+    image: {{ project_name_snake }}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: celery -A celery_worker worker --loglevel=info
+    env_file:
+      - .env.test
+    labels:
+      - "io.portainer.accesscontrol.teams={{ project_name_snake }}"
+    networks:
+      - {{ project_name_snake }}-network
+    restart: unless-stopped
+
+  celery-beat:
+    container_name: {{ project_name_snake }}-celery-beat
+    image: {{ project_name_snake }}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: celery -A celery_worker beat --loglevel=info
+    env_file:
+      - .env.test
+    labels:
+      - "io.portainer.accesscontrol.teams={{ project_name_snake }}"
+    networks:
+      - {{ project_name_snake }}-network
+    restart: unless-stopped
+{% endif %}
+
+networks:
+  {{ project_name_snake }}-network:
+    external: true

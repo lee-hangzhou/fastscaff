@@ -1,19 +1,24 @@
-.PHONY: help install dev test lint format clean docker-build docker-up docker-down{% if with_celery %} celery-worker celery-beat{% endif %}
+.PHONY: help install dev test lint format clean up down{% if with_celery %} celery-worker celery-beat{% endif %}
+
+COMPOSE_FILE ?= deploy/docker-compose.yml
+COMPOSE ?= docker compose -f $(COMPOSE_FILE)
+IMAGE_TAG ?= {{ project_name_snake }}:latest
+READY_URL ?= http://127.0.0.1:8000/api/v1/health/ready
+READY_TIMEOUT_SEC ?= 60
 
 help:
 	@echo "Available commands:"
-	@echo "  make install      Install dependencies"
-	@echo "  make dev          Start development server"
-	@echo "  make test         Run tests"
-	@echo "  make lint         Run linter"
-	@echo "  make format       Format code"
-	@echo "  make clean        Clean cache files"
-	@echo "  make docker-build Build Docker image"
-	@echo "  make docker-up    Start all services"
-	@echo "  make docker-down  Stop all services"
+	@echo "  make up            Build image then rolling recreate (old keeps serving during build)"
+	@echo "  make down          Stop test stack"
+	@echo "  make install       Install dependencies"
+	@echo "  make dev           Local uvicorn"
+	@echo "  make test          Run tests"
+	@echo "  make lint          Run linter"
+	@echo "  make format        Format code"
+	@echo "  make clean         Clean caches"
 {% if with_celery %}
-	@echo "  make celery-worker Start Celery worker"
-	@echo "  make celery-beat   Start Celery beat scheduler"
+	@echo "  make celery-worker Start Celery worker (local)"
+	@echo "  make celery-beat   Start Celery beat (local)"
 {% endif %}
 
 install:
@@ -44,17 +49,30 @@ clean:
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 
-docker-build:
-	docker-compose build
+# 先 build（旧容器继续服务）, 再 up 切换, 最后等 ready, 缩短「停掉到能接流量」的空档
+# 不要先 down 再 up, 那会把构建时间也算进不可用窗口
+up:
+	@set -euo pipefail; \
+	if [ ! -f "deploy/.env.test" ]; then \
+		echo "==> deploy/.env.test is missing" >&2; \
+		exit 1; \
+	fi; \
+	$(COMPOSE) build; \
+	$(COMPOSE) up -d --remove-orphans; \
+	echo "==> waiting for $(READY_URL)"; \
+	deadline=$$(($$(date +%s) + $(READY_TIMEOUT_SEC))); \
+	until curl -fsS "$(READY_URL)" >/dev/null 2>&1; do \
+		if [ "$$(date +%s)" -ge "$$deadline" ]; then \
+			echo "==> readiness timeout after $(READY_TIMEOUT_SEC)s" >&2; \
+			$(COMPOSE) logs --tail=80; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "==> ready"
 
-docker-up:
-	docker-compose up -d
-
-docker-down:
-	docker-compose down
-
-docker-logs:
-	docker-compose logs -f app
+down:
+	$(COMPOSE) down --remove-orphans
 {% if with_celery %}
 
 celery-worker:
@@ -63,4 +81,3 @@ celery-worker:
 celery-beat:
 	celery -A celery_worker beat --loglevel=info
 {% endif %}
-

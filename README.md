@@ -97,10 +97,9 @@ myproject/
 │   ├── middleware/          # Request/response middleware
 │   ├── exceptions/          # Custom exceptions
 │   └── utils/               # Utility functions
+├── deploy/                  # Test compose + prod K8s
 ├── tests/
 ├── .env.example
-├── Dockerfile
-├── docker-compose.yml
 ├── Makefile
 └── requirements.txt
 ```
@@ -162,13 +161,14 @@ The project runs immediately with SQLite - no database setup required.
 Available make commands:
 
 ```bash
-make dev          # Start development server
-make test         # Run tests
-make lint         # Run linter
-make format       # Format code
-make docker-up    # Start all services (Docker)
-make docker-down  # Stop all services
+make up            # Test deploy: build → recreate → wait ready
+make down          # Stop test stack
+make dev           # Local uvicorn
+make test          # Run tests
+make lint          # Run linter
 ```
+
+Deployment: test uses Compose + `deploy/.env.test` placeholders (`source /etc/profile` for real values); production uses `deploy/deployment.yaml` with ConfigMap/Secret. See generated `deploy/README.md`.
 
 If Celery is enabled:
 

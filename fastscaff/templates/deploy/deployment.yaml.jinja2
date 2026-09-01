@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ project_name_snake }}
+  namespace: {{ project_name_snake }}
+  labels:
+    app: {{ project_name_snake }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ project_name_snake }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: {{ project_name_snake }}
+    spec:
+      restartPolicy: Always
+      containers:
+        - name: {{ project_name_snake }}
+          image: ${IMAGE}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ project_name_snake }}-config
+            - secretRef:
+                name: {{ project_name_snake }}-secrets
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8000
+              scheme: HTTP
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/ready
+              port: 8000
+              scheme: HTTP
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      imagePullSecrets:
+        - name: acr-aliyun
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ project_name_snake }}
+  namespace: {{ project_name_snake }}
+  labels:
+    app: {{ project_name_snake }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ project_name_snake }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+{% if with_celery %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ project_name_snake }}-celery-worker
+  namespace: {{ project_name_snake }}
+  labels:
+    app: {{ project_name_snake }}-celery-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ project_name_snake }}-celery-worker
+  template:
+    metadata:
+      labels:
+        app: {{ project_name_snake }}-celery-worker
+    spec:
+      restartPolicy: Always
+      containers:
+        - name: celery-worker
+          image: ${IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["celery", "-A", "celery_worker", "worker", "--loglevel=info"]
+          envFrom:
+            - configMapRef:
+                name: {{ project_name_snake }}-config
+            - secretRef:
+                name: {{ project_name_snake }}-secrets
+      imagePullSecrets:
+        - name: acr-aliyun
+{% endif %}

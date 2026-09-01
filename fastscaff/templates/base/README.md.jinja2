@@ -4,8 +4,7 @@
 
 - FastAPI
 - {% if is_tortoise %}Tortoise ORM{% else %}SQLAlchemy{% endif %}
-- MySQL
-- Redis
+- MySQL / Redis（测试与生产由共享基础设施提供）
 - JWT Authentication
 
 ## Project Structure
@@ -13,49 +12,36 @@
 ```
 {{ project_name }}/
 ├── app/
-│   ├── main.py
-│   ├── core/
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── logger.py
-│   │   ├── security.py
-│   │   └── lifespan.py
-│   ├── api/
-│   │   └── v1/
-│   │       ├── router.py
-│   │       └── endpoints/
-│   ├── models/
-│   ├── schemas/
-│   ├── repositories/
-│   ├── services/
-│   ├── middleware/
-│   ├── exceptions/
-│   └── utils/
 ├── tests/
-├── Dockerfile
-├── docker-compose.yml
+├── deploy/
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── .env.test
+│   ├── deployment.yaml
+│   └── README.md
+├── .env.example
+├── Makefile
 └── requirements.txt
 ```
 
-## Quick Start
+## Quick Start（本机）
 
 ```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
 cp .env.example .env
+pip install -r requirements.txt
 make dev
 ```
 
-## API Documentation
+- Swagger: http://localhost:8000/docs
 
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+## 部署
 
-## Docker Deployment
+测试走 Compose，生产走 K8s，说明见 [`deploy/README.md`](deploy/README.md)。
 
 ```bash
-docker-compose up -d
+# 测试机：先 source /etc/profile 注入真值，再
+docker network create {{ project_name_snake }}-network   # 若尚无
+make up
 ```
 
 ## License
